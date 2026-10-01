@@ -151,9 +151,49 @@
     });
   }
 
+  // Dialog with any content. body/actions may be nodes or (close) => nodes. onSubmit(form) may throw to show an error.
+  function openDialog({ title, message, body, actions, submit = 'Save', cancel = 'Cancel', danger = false, wide = false, onSubmit }) {
+    return new Promise((resolve) => {
+      const dlg = h('dialog', { class: 'modal' + (wide ? ' wide' : '') });
+      const close = (value) => { resolve(value === undefined ? null : value); dlg.close(); };
+      const err = h('p', { class: 'error-text', role: 'alert', hidden: true });
+      const ok = submit ? h('button', { type: 'submit', class: danger ? 'btn destructive' : 'btn primary' }, submit) : null;
+      const form = h('form', { method: 'dialog', novalidate: true },
+        h('h3', {}, title),
+        message ? h('p', { class: 'msg' }, message) : null,
+        typeof body === 'function' ? body(close) : body,
+        err,
+        h('div', { class: 'row-end' },
+          typeof actions === 'function' ? actions(close) : actions,
+          cancel ? h('button', { type: 'button', class: 'btn ghost', onclick: () => close(null) }, cancel) : null,
+          ok));
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        if (!onSubmit) return close(true);
+        ok.disabled = true;
+        err.hidden = true;
+        try {
+          const result = await onSubmit(form);
+          close(result === undefined ? true : result);
+        } catch (ex) {
+          err.textContent = ex.message;
+          err.hidden = false;
+        } finally {
+          ok.disabled = false;
+        }
+      });
+      dlg.addEventListener('close', () => { dlg.remove(); resolve(null); });
+      dlg.append(form);
+      document.body.append(dlg);
+      dlg.showModal();
+      const first = form.querySelector('input:not([type=hidden]), select, textarea');
+      if (first) first.focus();
+    });
+  }
+
   function confirmDialog(title, message, submit = 'Delete') {
     return formDialog({ title, message, submit, danger: true, onSubmit: () => true });
   }
 
-  window.UI = { h, clear, append, peso, pesoRound, count, compactPeso, parseTime, fmtTime, ago, toast, request, formDialog, confirmDialog };
+  window.UI = { h, clear, append, peso, pesoRound, count, compactPeso, parseTime, fmtTime, ago, toast, request, formDialog, confirmDialog, openDialog };
 })();

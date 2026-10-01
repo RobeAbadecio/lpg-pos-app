@@ -64,6 +64,7 @@
 
     renderTunnel(o.tunnel);
     renderInventory(o.inventory);
+    renderReceivables(o.receivables);
     renderSessions(o.sessions);
     renderUsers(o.users);
     renderActivity(o.activity);
@@ -125,11 +126,19 @@
   }
 
   const STATUS = { ok: ['●', 'In stock'], low: ['▲', 'Low'], out: ['✕', 'Out of stock'] };
-  const MOVE_LABEL = { delivery: 'Delivery', count: 'Stock count', damaged: 'Write-off', other: 'Adjustment' };
+  const MOVE_LABEL = {
+    delivery: 'Delivery', purchase: 'Bought new tanks', count: 'Stock count', damaged: 'Write-off', other: 'Adjustment',
+    condition: 'Tank condition', dispose: 'Disposed', 'refill-send': 'Sent to refiller', 'refill-receive': 'Back from refiller',
+    'refill-reject': 'Returned unfilled',
+  };
+  const PAY = { paid: ['ok', '●', 'Paid'], partial: ['low', '◐', 'Partly paid'], unpaid: ['out', '○', 'Unpaid'] };
+  const payPill = (status) => h('span', { class: 'status ' + PAY[status][0] }, h('span', { class: 'i', 'aria-hidden': 'true' }, PAY[status][1]), PAY[status][2]);
   const statusPill = (status) => h('span', { class: 'status ' + status }, h('span', { class: 'i', 'aria-hidden': 'true' }, STATUS[status][0]), STATUS[status][1]);
   // Full cylinders carry the colour; empties moving in and out are routine, so they stay neutral.
   const signed = (n, word) => n === 0 ? null
-    : h('span', { class: word === 'full' ? (n > 0 ? 'delta-pos' : 'delta-neg') : 'secondary' }, `${n > 0 ? '+' : '−'}${Math.abs(n)} ${word}`);
+    : h('span', { class: word === 'with load' ? (n > 0 ? 'delta-pos' : 'delta-neg') : 'secondary' }, `${n > 0 ? '+' : '−'}${Math.abs(n)} ${word}`);
+  const moveDeltas = (m) => [signed(m.loaded, 'with load'), signed(m.empty, 'empty'), signed(m.damaged, 'damaged'), signed(m.atRefiller, 'at refiller')]
+    .filter(Boolean).flatMap((x, i) => (i ? [' ', x] : [x]));
 
   function daysText(d, full) {
     if (full <= 0) return 'none left';
@@ -143,24 +152,60 @@
     clear($('stock-banner'), attention.length ? h('div', { class: 'alert-banner', role: 'status' },
       h('span', { class: 'i', 'aria-hidden': 'true' }, '⚠'),
       h('div', {},
-        h('strong', {}, `${attention.length} product${attention.length === 1 ? ' needs' : 's need'} restocking`),
-        h('p', {}, attention.map((i) => i.status === 'out' ? `${i.label}: out of stock` : `${i.label}: ${i.full} left (${daysText(i.daysLeft, i.full)})`).join(' · ')))) : null);
+        h('strong', {}, `${attention.length} product${attention.length === 1 ? ' needs' : 's need'} refilling`),
+        h('p', {}, attention.map((i) => (i.loaded <= 0 ? `${i.label}: none with load` : `${i.label}: ${i.loaded} with load (${daysText(i.daysLeft, i.loaded)})`)
+          + (i.atRefiller ? `, ${i.atRefiller} at refiller` : i.empty ? `, ${i.empty} empty to send` : '')).join(' · ')))) : null);
 
-    $('inventory-sub').textContent = `${count.format(inv.totalFull)} full · ${count.format(inv.totalEmpty)} empty on hand`;
-    clear($('inventory'), inv.items.length ? h('div', { class: 'list' }, inv.items.map((i) => h('div', { class: 'inv-row' },
-      h('div', {},
-        h('div', { class: 'name' }, i.label, i.status !== 'ok' ? statusPill(i.status) : null),
+    $('inventory-sub').textContent = `${count.format(inv.totalLoaded)} with load · ${count.format(inv.totalEmpty)} empty · ${count.format(inv.totalRefiller)} at refiller`;
+    // Group by supplier (most urgent product first within each), so each refiller's brands sit together.
+    const groups = [];
+    for (const i of inv.items) {
+      let g = groups.find((x) => x.id === i.supplierId);
+      if (!g) groups.push(g = { id: i.supplierId, name: i.supplier, items: [] });
+      g.items.push(i);
+    }
+    const sup = (id) => inv.suppliers.find((s) => s.id === id);
+    clear($('inventory'), inv.items.length ? groups.map((g) => [
+      h('div', { class: 'inv-group' }, g.name || 'No supplier set', g.id && sup(g.id)?.contact ? h('span', { class: 'muted' }, ` · ${sup(g.id).contact}`) : null),
+      h('div', { class: 'list' }, g.items.map((i) => h('div', { class: 'inv-row' },
+        h('div', {},
+          h('div', { class: 'name' }, i.label, i.status !== 'ok' ? statusPill(i.status) : null),
+          h('div', { class: 'meta' }, [
+            i.perDay <= 0 ? 'No sales in 14 days' : i.perDay < 0.1 ? 'Sells <0.1/day' : `Sells ~${i.perDay.toFixed(1)}/day`,
+            i.loaded <= 0 || i.daysLeft != null ? daysText(i.daysLeft, i.loaded) : null,
+            `reorder at ${i.reorderLevel}`,
+          ].filter(Boolean).join(' · '))),
+        h('div', { class: 'qty' }, h('strong', {}, count.format(i.loaded)),
+          h('small', {}, 'with load'),
+          h('small', {}, [`${count.format(i.empty)} empty`,
+            i.atRefiller ? ` · ${i.atRefiller} at refiller` : null])))))]) : h('div', { class: 'empty' }, 'No products yet.'));
+
+    clear($('refills'),
+      inv.owedToRefillers > 0 ? h('div', { class: 'owe-line' }, h('span', {}, 'Still owed to refillers'), h('strong', { class: 'num' }, peso.format(inv.owedToRefillers))) : null,
+      inv.refills.length ? inv.refills.map((r) => h('div', { class: 'move-row' },
+        h('div', {}, h('strong', {}, r.supplier), ` · trip #${r.id}`),
+        h('div', { class: 'num' }, r.tanks ? `${r.tanks} tank${r.tanks === 1 ? '' : 's'}` : 'All back'),
         h('div', { class: 'meta' }, [
-          i.perDay <= 0 ? 'No sales in 14 days' : i.perDay < 0.1 ? 'Sells <0.1/day' : `Sells ~${i.perDay.toFixed(1)}/day`,
-          i.full <= 0 || i.daysLeft != null ? daysText(i.daysLeft, i.full) : null,
-          `reorder at ${i.reorderLevel}`,
-        ].filter(Boolean).join(' · '))),
-      h('div', { class: 'qty' }, h('strong', {}, count.format(i.full)), h('small', {}, `full · ${count.format(i.empty)} empty`))))) : h('div', { class: 'empty' }, 'No products yet.'));
+          `Sent ${fmtTime(r.time)}${r.days ? ` (${r.days} day${r.days === 1 ? '' : 's'} ago)` : ''}`,
+          r.items.length ? r.items.map((x) => `${x.outstanding} × ${x.product}`).join(', ') : null,
+          r.cost ? `bill ${peso.format(r.cost)}, paid ${peso.format(r.paid)}` : null,
+        ].filter(Boolean).join(' · '), r.owed > 0 ? h('span', { class: 'owes-text' }, ` · ${peso.format(r.owed)} to pay`) : null))) : h('div', { class: 'empty' }, 'No tanks at the refiller.'));
 
     clear($('stock-moves'), inv.movements.length ? inv.movements.map((m) => h('div', { class: 'move-row' },
       h('div', {}, h('strong', {}, MOVE_LABEL[m.type] || m.type), ' · ', m.product),
-      h('div', { class: 'num' }, [signed(m.full, 'full'), m.full && m.empty ? ' ' : null, signed(m.empty, 'empty')]),
+      h('div', { class: 'num' }, moveDeltas(m)),
       h('div', { class: 'meta' }, [fmtTime(m.time), m.staff, m.note].filter(Boolean).join(' · ')))) : h('div', { class: 'empty' }, 'Nothing recorded yet.'));
+  }
+
+  function renderReceivables(rv) {
+    $('receivables-sub').textContent = rv.customers ? `${rv.customers} customer${rv.customers === 1 ? '' : 's'} with pay-later balances` : 'Nobody owes anything';
+    clear($('receivables'), rv.customers ? [
+      h('div', { class: 'big-owed num' }, peso.format(rv.total)),
+      h('div', { class: 'list' }, rv.top.map((c) => h('div', { class: 'owe-row' },
+        h('div', {}, h('div', {}, c.customer),
+          h('div', { class: 'meta' }, `${c.receipts} unpaid receipt${c.receipts === 1 ? '' : 's'}${c.since ? ` · oldest ${fmtTime(c.since)}${c.days ? ` (${c.days} days)` : ''}` : ''}`)),
+        h('strong', { class: 'num' }, peso.format(c.balance))))),
+    ] : h('div', { class: 'empty' }, 'All receipts are paid.'));
   }
 
   function renderSessions(sessions) {
@@ -270,14 +315,15 @@
     for (const c of document.querySelectorAll('[data-range]')) c.setAttribute('aria-pressed', String(c.dataset.range === state.range));
   }
 
-  function delta(el, cur, prev, compare) {
+  function delta(el, cur, prev, compare, upIsBad) {
     clear(el);
-    if (prev == null) return;
-    if (prev === 0 && cur === 0) { el.append('No sales in either period'); return; }
+    if (prev == null || cur == null) return;
+    if (prev === 0 && cur === 0) { el.append('None in either period'); return; }
     if (prev === 0) { el.append(h('span', { class: 'up' }, '▲ New'), ' ', compare); return; }
     const pct = ((cur - prev) / prev) * 100;
     const flat = Math.abs(pct) < 0.5;
-    el.append(flat ? h('span', {}, '■ No change') : h('span', { class: pct > 0 ? 'up' : 'down' }, `${pct > 0 ? '▲' : '▼'} ${Math.abs(pct).toFixed(Math.abs(pct) < 10 ? 1 : 0)}%`), ' ', compare);
+    const good = upIsBad ? pct < 0 : pct > 0;
+    el.append(flat ? h('span', {}, '■ No change') : h('span', { class: good ? 'up' : 'down' }, `${pct > 0 ? '▲' : '▼'} ${Math.abs(pct).toFixed(Math.abs(pct) < 10 ? 1 : 0)}%`), ' ', compare);
   }
 
   function renderStats() {
@@ -293,28 +339,39 @@
     delta($('kpi-qty-delta'), t.qty, p && p.qty, s.compare);
     delta($('kpi-avg-delta'), t.avg, p && p.avg, s.compare);
     delta($('kpi-customers-delta'), t.customers, p && p.customers, s.compare);
+    $('kpi-collected').textContent = UI.pesoRound.format(t.collected);
+    delta($('kpi-collected-delta'), t.collected, p && p.collected, s.compare);
+    $('kpi-supplier').textContent = UI.pesoRound.format(t.supplierPaid);
+    delta($('kpi-supplier-delta'), t.supplierPaid, p && p.supplierPaid, s.compare, true);
+    $('kpi-profit').textContent = t.profit == null ? '—' : UI.pesoRound.format(t.profit);
+    delta($('kpi-profit-delta'), t.profit, p && p.profit, s.compare);
+    // Profit = sales − each tank's refill (or new-tank) cost. Products without a cost can't be counted.
+    $('kpi-profit-note').textContent = t.profit == null
+      ? (s.uncosted.length ? `Set a refill cost in Products for ${s.uncosted.join(', ')}` : '')
+      : s.uncosted.length ? `Leaves out ${s.uncosted.join(', ')} (no refill cost set)`
+      : `${t.costedRevenue ? Math.round(t.profit / t.costedRevenue * 100) : 0}% of sales`;
 
     const per = { hour: 'hour', day: 'day', month: 'month' }[s.bucket];
     $('trend-title').textContent = `Revenue by ${per}`;
     $('trend-sub').textContent = s.range === 'today' ? 'Today, hour by hour' : s.range === 'all' ? `Since ${fmtDate(s.start)}` : `${fmtDate(s.start)} – today`;
     renderTrend();
 
-    hbars($('by-product'), s.byProduct, (r) => `${count.format(r.qty)} cylinder${r.qty === 1 ? '' : 's'} · ${count.format(r.count)} sale${r.count === 1 ? '' : 's'}`, 'No sales in this period.');
-    hbars($('by-staff'), s.byStaff, (r) => `${count.format(r.count)} sale${r.count === 1 ? '' : 's'}`, 'No sales in this period.');
+    hbars($('by-product'), s.byProduct, (r) => `${count.format(r.qty)} cylinder${r.qty === 1 ? '' : 's'} · ${count.format(r.count)} receipt${r.count === 1 ? '' : 's'}${r.profit != null ? ` · ≈${UI.pesoRound.format(r.profit)} profit` : ''}`, 'No sales in this period.');
+    hbars($('by-staff'), s.byStaff, (r) => `${count.format(r.count)} receipt${r.count === 1 ? '' : 's'}`, 'No sales in this period.');
 
     clear($('top-customers'), s.topCustomers.length ? h('table', {},
-      h('thead', {}, h('tr', {}, h('th', {}, 'Customer'), h('th', { class: 'right' }, 'Sales'), h('th', { class: 'right' }, 'Revenue'))),
+      h('thead', {}, h('tr', {}, h('th', {}, 'Customer'), h('th', { class: 'right' }, 'Receipts'), h('th', { class: 'right' }, 'Revenue'))),
       h('tbody', {}, s.topCustomers.map((c) => h('tr', {}, h('td', {}, c.label), h('td', { class: 'right num' }, count.format(c.count)), h('td', { class: 'right num' }, peso.format(c.revenue))))))
       : h('div', { class: 'empty' }, 'No sales in this period.'));
 
-    $('totals-sub').textContent = `${count.format(s.counts.transactions)} sales on record · ${count.format(s.counts.customers)} customers · ${count.format(s.counts.products)} products`;
+    $('totals-sub').textContent = `${count.format(s.counts.receipts)} receipts on record · ${count.format(s.counts.customers)} customers · ${count.format(s.counts.products)} products`;
     clear($('recent'), s.recent.length ? h('table', {},
-      h('thead', {}, h('tr', {}, h('th', {}, 'When'), h('th', {}, 'Sale'), h('th', { class: 'right' }, 'Amount'))),
+      h('thead', {}, h('tr', {}, h('th', {}, 'When'), h('th', {}, 'Receipt'), h('th', { class: 'right' }, 'Total'))),
       h('tbody', {}, s.recent.map((r) => h('tr', {},
         h('td', { class: 'secondary nowrap' }, fmtTime(r.time)),
-        h('td', {}, h('div', {}, r.customer), h('div', { class: 'muted' }, h('small', {}, `${r.qty} × ${r.product} · ${r.staff}`))),
-        h('td', { class: 'right num' }, peso.format(r.amount))))))
-      : h('div', { class: 'empty' }, 'No sales recorded yet.'));
+        h('td', {}, h('div', {}, `#${r.id} · ${r.customer}`), h('div', { class: 'muted' }, h('small', {}, `${r.items} · ${r.staff}`))),
+        h('td', { class: 'right' }, h('div', { class: 'num' }, peso.format(r.total)), r.status !== 'paid' ? payPill(r.status) : null)))))
+      : h('div', { class: 'empty' }, 'No receipts recorded yet.'));
     tickUpdated();
   }
 
@@ -353,7 +410,7 @@
     if (state.table) {
       const rows = [...s.series].reverse();
       clear($('trend-table'), h('table', {},
-        h('thead', {}, h('tr', {}, h('th', {}, s.bucket === 'hour' ? 'Hour' : s.bucket === 'month' ? 'Month' : 'Day'), h('th', { class: 'right' }, 'Sales'), h('th', { class: 'right' }, 'Cylinders'), h('th', { class: 'right' }, 'Revenue'))),
+        h('thead', {}, h('tr', {}, h('th', {}, s.bucket === 'hour' ? 'Hour' : s.bucket === 'month' ? 'Month' : 'Day'), h('th', { class: 'right' }, 'Receipts'), h('th', { class: 'right' }, 'Cylinders'), h('th', { class: 'right' }, 'Revenue'))),
         h('tbody', {}, rows.map((r) => h('tr', {}, h('td', {}, bucketLabel(r.key, s.bucket, true)), h('td', { class: 'right num' }, count.format(r.count)), h('td', { class: 'right num' }, count.format(r.qty)), h('td', { class: 'right num' }, peso.format(r.revenue)))))));
     } else {
       columnChart($('trend-chart'), s.series, s.bucket);
@@ -465,7 +522,7 @@
       bars.forEach((b, j) => b.path.classList.toggle('active', j === i));
       const d = series[i];
       showTip(cx, cy, peso.format(d.revenue), bucketLabel(d.key, bucket, true),
-        `${count.format(d.count)} sale${d.count === 1 ? '' : 's'} · ${count.format(d.qty)} cylinder${d.qty === 1 ? '' : 's'}`);
+        `${count.format(d.count)} receipt${d.count === 1 ? '' : 's'} · ${count.format(d.qty)} cylinder${d.qty === 1 ? '' : 's'}`);
     };
     const deactivate = () => { active = -1; container.classList.remove('hovering'); bars.forEach((b) => b.path.classList.remove('active')); hideTip(); };
     const indexAt = (clientX) => {

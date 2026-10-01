@@ -10,6 +10,12 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+# Already running? Don't regenerate its data underneath it.
+if lsof -nP -iTCP:8190 -sTCP:LISTEN >/dev/null 2>&1; then
+  echo "The demo is already running: admin dashboard http://localhost:8190 · POS http://localhost:8180"
+  exit 0
+fi
+
 python3 make_demo_data.py data
 
 # Compile into the demo's own folder so the real server's build/ is never rewritten while it runs.

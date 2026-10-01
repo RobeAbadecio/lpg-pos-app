@@ -12,7 +12,7 @@
   <header class="topbar">
     <div class="brand">
       <img src="/shared/icon.svg" alt="" width="32" height="32">
-      <div><div class="title">LPG POS Admin</div><div class="muted sub">Server dashboard · this Mac</div></div>
+      <div><div class="title">LPG POS Admin</div><div class="muted sub">Server dashboard · this Mac · <span data-version></span></div></div>
     </div>
     <div class="top-actions">
       <span class="pill" id="server-status"><span class="dot"></span><span>Connecting…</span></span>
@@ -69,10 +69,13 @@
           </section>
 
           <section class="kpis">
-            <div class="card tile"><div class="label">Sales</div><div class="value" id="kpi-count">—</div><div class="delta" id="kpi-count-delta"></div></div>
+            <div class="card tile"><div class="label">Receipts</div><div class="value" id="kpi-count">—</div><div class="delta" id="kpi-count-delta"></div></div>
             <div class="card tile"><div class="label">Cylinders sold</div><div class="value" id="kpi-qty">—</div><div class="delta" id="kpi-qty-delta"></div></div>
             <div class="card tile"><div class="label">Average sale</div><div class="value" id="kpi-avg">—</div><div class="delta" id="kpi-avg-delta"></div></div>
             <div class="card tile"><div class="label">Customers served</div><div class="value" id="kpi-customers">—</div><div class="delta" id="kpi-customers-delta"></div></div>
+            <div class="card tile"><div class="label">Cash collected</div><div class="value" id="kpi-collected">—</div><div class="delta" id="kpi-collected-delta"></div></div>
+            <div class="card tile"><div class="label">Paid to suppliers</div><div class="value" id="kpi-supplier">—</div><div class="delta" id="kpi-supplier-delta"></div></div>
+            <div class="card tile"><div class="label">Gross profit (est.)</div><div class="value" id="kpi-profit">—</div><div class="delta" id="kpi-profit-delta"></div><div class="tile-note" id="kpi-profit-note"></div></div>
           </section>
 
           <div class="two">
@@ -92,7 +95,7 @@
               <div class="table-wrap" id="top-customers"></div>
             </section>
             <section class="card">
-              <div class="card-head"><div><h2>Latest sales</h2><div class="sub" id="totals-sub"></div></div></div>
+              <div class="card-head"><div><h2>Latest receipts</h2><div class="sub" id="totals-sub"></div></div></div>
               <div class="table-wrap" id="recent"></div>
             </section>
           </div>
@@ -104,8 +107,15 @@
         <section class="card">
           <div class="card-head"><div><h2>Inventory</h2><div class="sub" id="inventory-sub"></div></div></div>
           <div id="inventory"></div>
-          <h3 class="minor-head">Recent deliveries &amp; counts</h3>
+          <h3 class="minor-head">At the refiller</h3>
+          <div id="refills"></div>
+          <h3 class="minor-head">Recent stock changes</h3>
           <div id="stock-moves"></div>
+        </section>
+
+        <section class="card">
+          <div class="card-head"><div><h2>Unpaid balances</h2><div class="sub" id="receivables-sub"></div></div></div>
+          <div id="receivables"></div>
         </section>
 
         <section class="card">
@@ -142,6 +152,7 @@
   </main>
 
   <div class="tooltip" id="tooltip" role="tooltip" hidden></div>
+  <script src="/shared/version.js"></script>
   <script src="/shared/ui.js"></script>
   <script src="/admin.js"></script>
 </body>

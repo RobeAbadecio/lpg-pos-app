@@ -155,6 +155,7 @@ dialog.modal {
   width: min(460px, calc(100vw - 32px)); padding: 0; border: 1px solid var(--border);
   border-radius: 14px; background: var(--surface); color: var(--ink); box-shadow: 0 20px 60px rgba(0, 0, 0, .25);
 }
+dialog.modal.wide { width: min(640px, calc(100vw - 32px)); }
 dialog.modal::backdrop { background: rgba(0, 0, 0, .35); }
 .modal form { display: grid; gap: 14px; padding: 20px; }
 .modal h3 { font-size: 17px; }

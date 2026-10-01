@@ -28,16 +28,17 @@
       <p id="login-error" class="login-error" role="alert" hidden></p>
       <button class="btn primary lg block" type="submit">Sign in</button>
       <p class="muted small-print">Accounts are created by the admin on the server Mac.</p>
+      <p class="muted small-print version-line" data-version="long"></p>
     </form>
   </main>
 
   <!-- App -->
   <div id="app" hidden>
     <header class="topbar">
-      <div class="brand"><img src="/shared/icon.svg" alt="" width="28" height="28"><span>LPG POS</span><span class="pill demo-badge" id="demo-badge" hidden>Demo · fake data</span></div>
+      <div class="brand"><img src="/shared/icon.svg" alt="" width="28" height="28"><span>LPG POS</span><span class="muted version-tag" data-version></span><span class="pill demo-badge" id="demo-badge" hidden>Demo · fake data</span></div>
       <nav class="tabs" aria-label="Sections">
         <button class="tab" data-view="sell">New sale</button>
-        <button class="tab" data-view="history">Sales</button>
+        <button class="tab" data-view="history">Receipts</button>
         <button class="tab" data-view="customers">Customers</button>
         <button class="tab" data-view="products">Products</button>
         <button class="tab" data-view="inventory">Inventory<span class="tab-alert" id="tab-alert" hidden></span></button>
@@ -48,6 +49,7 @@
           <button class="btn ghost block" id="change-password">Change password</button>
           <button class="btn ghost block" id="logout">Sign out</button>
           <p class="muted menu-note" id="demo-note" hidden>Demo mode: everyone is signed in as this user.</p>
+          <p class="muted menu-note" data-version="long"></p>
         </div>
       </details>
     </header>
@@ -55,6 +57,10 @@
     <main class="content">
       <!-- New sale -->
       <section id="view-sell" class="view">
+        <div class="edit-banner" id="edit-banner" hidden>
+          <span>Editing receipt <strong id="edit-id"></strong>. Saving replaces its items, prices and payment.</span>
+          <button class="btn small" id="cancel-edit">Cancel editing</button>
+        </div>
         <div class="sell-grid">
           <div class="stack">
             <div class="card">
@@ -69,47 +75,61 @@
               </div>
             </div>
             <div class="card">
-              <div class="card-head"><div><h2>2 · LPG product</h2><div class="sub">Tap a cylinder to add it</div></div></div>
+              <div class="card-head"><div><h2>2 · LPG tanks</h2><div class="sub">Tap to add to the receipt; tap again for one more</div></div></div>
               <div id="sell-products" class="product-grid"></div>
             </div>
           </div>
           <aside class="stack sell-side">
             <div class="card order">
-              <h2>3 · Order</h2>
-              <dl class="order-lines">
-                <div><dt>Customer</dt><dd id="order-customer" class="muted">Not selected</dd></div>
-                <div><dt>Product</dt><dd id="order-product" class="muted">Not selected</dd></div>
-                <div><dt>Unit price</dt><dd id="order-unit" class="num">—</dd></div>
-              </dl>
-              <div class="qty-row">
-                <span>Quantity</span>
-                <div class="stepper">
-                  <button class="btn" id="qty-minus" aria-label="Decrease quantity">−</button>
-                  <input id="qty" class="input num" type="number" min="1" max="100" value="1" inputmode="numeric" aria-label="Quantity">
-                  <button class="btn" id="qty-plus" aria-label="Increase quantity">+</button>
-                </div>
+              <div class="card-head"><h2>3 · Receipt</h2><span class="muted" id="cart-count"></span></div>
+              <div id="cart-lines" class="cart-lines"></div>
+              <div class="totals">
+                <div><span>Subtotal</span><span id="cart-subtotal" class="num">₱0.00</span></div>
+                <label class="discount-row"><span>Discount</span>
+                  <input id="cart-discount" class="input num" inputmode="decimal" placeholder="₱ or %" autocomplete="off" aria-describedby="discount-help">
+                  <span id="discount-amount" class="num muted"></span>
+                </label>
+                <small id="discount-help" class="muted">Type an amount (50) or a percent (5%).</small>
+                <div class="total"><span>Total</span><strong id="cart-total" class="num">₱0.00</strong></div>
               </div>
-              <label class="swap-row">
-                <input type="checkbox" id="returned-empty" checked>
-                <span><strong>Customer returned an empty cylinder</strong><small class="muted">Untick for a new tank purchase (no empty swapped in)</small></span>
-              </label>
-              <div class="total"><span>Total</span><strong id="order-total">₱0.00</strong></div>
+              <div class="pay">
+                <div class="seg" role="radiogroup" aria-label="Payment">
+                  <button type="button" role="radio" data-pay="full">Paid in full</button>
+                  <button type="button" role="radio" data-pay="partial">Partial</button>
+                  <button type="button" role="radio" data-pay="later">Pay later</button>
+                </div>
+                <div id="pay-full" class="pay-detail">
+                  <label class="field inline"><span>Cash received</span><input id="cash" class="input num" inputmode="decimal" placeholder="Optional" autocomplete="off"></label>
+                  <div class="change" id="change"></div>
+                </div>
+                <div id="pay-partial" class="pay-detail" hidden>
+                  <label class="field inline"><span>Paid now</span><input id="paid-now" class="input num" inputmode="decimal" autocomplete="off"></label>
+                </div>
+                <p id="credit-note" class="credit-note" hidden></p>
+              </div>
+              <label class="field"><span>Note on receipt (optional)</span><input id="cart-note" class="input" maxlength="160" autocomplete="off"></label>
               <button class="btn primary lg block" id="process" disabled>Process sale</button>
             </div>
             <div class="card">
-              <div class="card-head"><h2>Latest sales</h2><button class="btn small ghost" data-goto="history">See all</button></div>
+              <div class="card-head"><h2>Latest receipts</h2><button class="btn small ghost" data-goto="history">See all</button></div>
               <div id="sell-recent"></div>
             </div>
           </aside>
         </div>
       </section>
 
-      <!-- Sales history -->
+      <!-- Receipts -->
       <section id="view-history" class="view" hidden>
         <div class="card">
           <div class="card-head wrap">
-            <div><h2>Sales history</h2><div class="sub" id="history-summary"></div></div>
-            <input id="history-search" class="input search" type="search" placeholder="Search sales…">
+            <div><h2>Receipts</h2><div class="sub" id="history-summary"></div></div>
+            <div class="head-actions">
+              <div class="seg small" role="radiogroup" aria-label="Show">
+                <button type="button" role="radio" data-filter="all">All</button>
+                <button type="button" role="radio" data-filter="unpaid">Unpaid</button>
+              </div>
+              <input id="history-search" class="input search" type="search" placeholder="Search receipts…">
+            </div>
           </div>
           <div class="table-wrap" id="history-table"></div>
         </div>
@@ -129,27 +149,6 @@
         </div>
       </section>
 
-      <!-- Inventory -->
-      <section id="view-inventory" class="view" hidden>
-        <div class="stack">
-          <div id="inventory-alert"></div>
-          <div class="card">
-            <div class="card-head wrap">
-              <div><h2>Stock on hand</h2><div class="sub" id="inventory-summary"></div></div>
-              <div class="head-actions">
-                <button class="btn" id="stock-adjust">Count / adjust</button>
-                <button class="btn primary" id="stock-delivery">+ Record delivery</button>
-              </div>
-            </div>
-            <div class="table-wrap" id="inventory-table"></div>
-          </div>
-          <div class="card">
-            <div class="card-head"><div><h2>Stock history</h2><div class="sub">Deliveries, counts and write-offs. Sales are taken off automatically.</div></div></div>
-            <div id="movements"></div>
-          </div>
-        </div>
-      </section>
-
       <!-- Products -->
       <section id="view-products" class="view" hidden>
         <div class="card">
@@ -160,17 +159,54 @@
           <div class="table-wrap" id="products-table"></div>
         </div>
       </section>
+
+      <!-- Inventory -->
+      <section id="view-inventory" class="view" hidden>
+        <div class="stack">
+          <div id="inventory-alert"></div>
+          <div class="card">
+            <div class="card-head wrap">
+              <div><h2>Tanks on hand</h2><div class="sub" id="inventory-summary"></div></div>
+              <div class="head-actions">
+                <button class="btn primary" id="refill-send">Send to refiller</button>
+                <button class="btn" id="refill-receive">Receive from refiller</button>
+                <button class="btn" id="stock-purchase">Buy new tanks</button>
+                <button class="btn" id="stock-adjust">Count / adjust</button>
+              </div>
+            </div>
+            <div class="table-wrap" id="inventory-table"></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><div><h2>At the refiller</h2><div class="sub">Empty tanks sent out for refilling and not back yet</div></div></div>
+            <div id="refills"></div>
+          </div>
+          <div class="card">
+            <div class="card-head wrap">
+              <div><h2>Suppliers</h2><div class="sub">Who refills each brand</div></div>
+              <button class="btn" id="add-supplier">+ Add supplier</button>
+            </div>
+            <div id="suppliers"></div>
+          </div>
+          <div class="card">
+            <div class="card-head"><div><h2>Stock history</h2><div class="sub">Refills, purchases and counts. Sales are taken off automatically.</div></div></div>
+            <div id="movements"></div>
+          </div>
+        </div>
+      </section>
     </main>
 
     <nav class="bottomnav" aria-label="Sections">
       <button class="tab" data-view="sell"><span class="ico">＋</span>Sale</button>
-      <button class="tab" data-view="history"><span class="ico">≡</span>Sales</button>
+      <button class="tab" data-view="history"><span class="ico">≡</span>Receipts</button>
       <button class="tab" data-view="customers"><span class="ico">☺</span>Customers</button>
       <button class="tab" data-view="products"><span class="ico">◍</span>Products</button>
       <button class="tab" data-view="inventory"><span class="ico">▤</span>Stock<span class="tab-alert" id="tab-alert-sm" hidden></span></button>
     </nav>
   </div>
 
+  <div id="print-area" aria-hidden="true"></div>
+
+  <script src="/shared/version.js"></script>
   <script src="/shared/ui.js"></script>
   <script src="/app.js"></script>
 </body>

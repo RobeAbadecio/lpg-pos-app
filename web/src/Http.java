@@ -2,6 +2,7 @@ import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.URLDecoder;
@@ -9,6 +10,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
+import java.util.zip.GZIPOutputStream;
 
 /** Small request/response helpers on top of the JDK's built-in HttpServer. */
 final class Http {
@@ -34,7 +36,7 @@ final class Http {
                 h.handle(r);
             } catch (Error e) {
                 r.json(e.status, Json.obj("error", e.getMessage()));
-            } catch (DataStore.StockException e) {
+            } catch (DataStore.Conflict e) {
                 r.json(409, Json.obj("error", e.getMessage()));
             } catch (Exception e) {
                 e.printStackTrace();
@@ -131,6 +133,16 @@ final class Http {
             send(status, "application/json; charset=utf-8", Json.write(body).getBytes(StandardCharsets.UTF_8), "no-store");
         }
 
+        /** 304 for a client that already has this version of the data. */
+        boolean notModified(String etag) throws IOException {
+            if (!etag.equals(header("If-None-Match"))) return false;
+            sent = true;
+            ex.getResponseHeaders().set("ETag", etag);
+            ex.getResponseHeaders().set("Cache-Control", "no-store");
+            ex.sendResponseHeaders(304, -1);
+            return true;
+        }
+
         void file(Path file) throws IOException {
             send(200, mime(file), Files.readAllBytes(file), "no-cache");
         }
@@ -147,6 +159,16 @@ final class Http {
             h.set("Content-Security-Policy", "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
                     + "frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
             boolean noBody = method.equals("HEAD") || bytes.length == 0;
+            String accept = header("Accept-Encoding");
+            if (!noBody && bytes.length > 1024 && accept != null && accept.contains("gzip") && !type.startsWith("image/png")) {
+                ByteArrayOutputStream buf = new ByteArrayOutputStream(bytes.length / 4);
+                try (GZIPOutputStream gz = new GZIPOutputStream(buf)) {
+                    gz.write(bytes);
+                }
+                bytes = buf.toByteArray();
+                h.set("Content-Encoding", "gzip");
+                h.set("Vary", "Accept-Encoding");
+            }
             ex.sendResponseHeaders(status, noBody ? -1 : bytes.length);
             if (!noBody) {
                 try (OutputStream os = ex.getResponseBody()) {

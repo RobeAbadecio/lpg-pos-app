@@ -142,6 +142,7 @@ final class AdminApi implements Http.Handler {
                         "java", System.getProperty("java.version")),
                 "tunnel", tunnel.info(),
                 "inventory", Stats.inventory(store),
+                "receivables", Stats.receivables(store),
                 "sessions", sessionOut,
                 "users", users,
                 "activity", activity);
