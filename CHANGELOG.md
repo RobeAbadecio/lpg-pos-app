@@ -4,6 +4,12 @@ Every update gets a new version number. It's shown in the POS (header, account m
 
 Numbering is `major.minor.patch`: **major** when the data or the way staff work changes a lot, **minor** for new features, **patch** for fixes and small changes.
 
+## 2.0.1 — 2026-10-01
+
+- Each supplier refills only its own brand. The supplier form takes one brand, picked from your products' brands, and each brand has one supplier.
+- Sending empties to a supplier that doesn't refill that brand is refused.
+- A supplier's brand can't change while its tanks are still at the refiller.
+
 ## 2.0.0 — 2026-10-01
 
 Built from the store's list of changes.

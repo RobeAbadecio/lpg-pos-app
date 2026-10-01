@@ -185,6 +185,11 @@ final class PosApi implements Http.Handler {
                     if (qty > 0) items.merge(productParam(r, "productId." + i), qty, Integer::sum);
                 }
                 if (items.isEmpty()) throw new Http.Error(400, "Enter how many empty tanks you're sending");
+                for (DataStore.Product p : items.keySet()) {
+                    if (!sup.supplies(p.brand())) {
+                        throw new Http.Error(409, sup.name() + " only refills " + String.join(", ", sup.brands()) + ", not " + p.label() + ".");
+                    }
+                }
                 String note = limit(r.param("note"), 120, "Note");
                 DataStore.Refill rf = store.sendToRefiller(sup, items, who, note);
                 log.add(who, ip, "Sent to " + sup.name() + " (trip #" + rf.id() + "): " + countText(items) + (note.isEmpty() ? "" : " (" + note + ")"));
@@ -267,16 +272,21 @@ final class PosApi implements Http.Handler {
     private void saveSupplier(Http.Req r, String who, String ip, String id) throws IOException {
         String name = limit(r.param("name"), 80, "Name");
         if (name.isEmpty()) throw new Http.Error(400, "Supplier name is required");
-        List<String> brands = Arrays.stream(r.param("brands").split("[,;]")).map(String::trim).filter(b -> !b.isEmpty()).distinct().toList();
-        if (brands.isEmpty()) throw new Http.Error(400, "List at least one brand this supplier refills");
-        for (String b : brands) limit(b, 60, "Brand");
+        // A supplier refills only its own brand (one of the products' brands), and each brand has one supplier.
+        String wanted = r.param("brand").trim();
+        if (wanted.isEmpty()) throw new Http.Error(400, "Choose the brand this supplier refills");
+        String brand = store.products().stream().map(DataStore.Product::brand).filter(b -> b.equalsIgnoreCase(wanted))
+                .findFirst().orElseThrow(() -> new Http.Error(400, "No LPG product has the brand " + wanted));
         for (DataStore.Supplier other : store.suppliers()) {
-            if (other.id().equals(id)) continue;
-            for (String b : brands) {
-                if (other.supplies(b)) throw new Http.Error(409, b + " is already assigned to " + other.name() + ".");
+            if (!other.id().equals(id) && other.supplies(brand)) throw new Http.Error(409, brand + " is already assigned to " + other.name() + ".");
+        }
+        if (id != null) {
+            DataStore.Supplier old = store.supplier(id);
+            if (old != null && !old.supplies(brand) && store.hasTanksOut(id)) {
+                throw new Http.Error(409, "Tanks are still at " + old.name() + ". Receive them before changing its brand.");
             }
         }
-        DataStore.Supplier s = store.saveSupplier(id, name, limit(r.param("contact"), 60, "Contact"), brands, limit(r.param("note"), 120, "Note"));
+        DataStore.Supplier s = store.saveSupplier(id, name, limit(r.param("contact"), 60, "Contact"), List.of(brand), limit(r.param("note"), 120, "Note"));
         if (s == null) throw new Http.Error(404, "Supplier not found");
         log.add(who, ip, (id == null ? "Added supplier " : "Edited supplier ") + s.name() + " (" + String.join(", ", s.brands()) + ")");
         r.json(id == null ? 201 : 200, Json.obj("id", s.id()));

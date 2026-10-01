@@ -4,7 +4,7 @@ A point-of-sale system for an LPG (cooking gas) retail store. Staff record sales
 
 It started as a Java Swing desktop app (`src/`). The web version in `web/` uses the same CSV data, so both read the same files.
 
-**Current version: 2.0.0.** See [CHANGELOG.md](CHANGELOG.md) for what changed in each version. The number is shown in the POS and on the dashboard.
+**Current version: 2.0.1.** See [CHANGELOG.md](CHANGELOG.md) for what changed in each version. The number is shown in the POS and on the dashboard.
 
 ## Features
 
@@ -13,7 +13,7 @@ It started as a Java Swing desktop app (`src/`). The web version in `web/` uses 
 - Optional discount (₱ or %). Customers can pay in full, pay part now or pay later. Balances can be collected later.
 - Receipts can be searched, filtered to unpaid only, edited, voided and printed.
 - Customers (with their balances) and LPG products (refill price, new-tank price, refill cost, new-tank cost).
-- Inventory: tanks with load, empty tanks and tanks at the refiller, grouped by supplier.
+- Inventory: tanks with load, empty tanks and tanks at the refiller, grouped by supplier. Each supplier refills only its own brand.
   - Refiller trips can come back in parts, with the refiller's bill, what was paid and what's still owed.
   - Also: new-tank purchases, stock counts, write-offs and low-stock alerts. A sale can't take more than is in stock.
 
@@ -83,7 +83,7 @@ This generates about 4 months of made-up sales, customers, staff and stock. It n
 | `Receipts.csv` | id, dateTime, customerId, staff, discount, paidAtSale, note |
 | `Payments.csv` | id, dateTime, receiptId, customerId, amount, staff, note |
 | `StockMovements.csv` | id, dateTime, lpgId, type, loadedDelta, emptyDelta, staff, note[, damagedDelta, refillerDelta, refillId, unitCost] |
-| `Suppliers.csv` | id, name, contact, brands (separated by `;`), note |
+| `Suppliers.csv` | id, name, contact, brand (one per supplier), note |
 | `Refills.csv` | id, dateTime, supplierId, staff, note (one row per trip to the refiller) |
 | `SupplierPayments.csv` | id, dateTime, supplierId, refillId, kind, amount, staff, note |
 | `WebUsers.csv` | username, salt, hash, created |

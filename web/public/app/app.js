@@ -860,7 +860,7 @@
         h('span', {}, h('strong', {}, p.label), h('small', { class: 'muted' }, `${p.empty} empty on hand`)),
         h('input', { type: 'hidden', name: 'productId.' + i, value: p.id }),
         h('input', { class: 'input num', type: 'number', name: 'qty.' + i, min: 0, max: p.empty, step: 1, value: p.empty, inputmode: 'numeric', 'aria-label': `Empty ${p.label} tanks to send` })))
-        : h('p', { class: 'muted' }, 'None of your products use this supplier’s brands yet.'));
+        : h('p', { class: 'muted' }, 'None of your products use this supplier’s brand yet.'));
     };
     sel.addEventListener('change', draw);
     draw();
@@ -1021,15 +1021,19 @@
   }
 
   function supplierDialog(s) {
-    const brands = state.data.brands;
+    // A supplier refills only its own brand, and each brand has one supplier.
+    const taken = new Set(state.data.suppliers.filter((x) => !s || x.id !== s.id).flatMap((x) => x.brands.map((b) => b.toLowerCase())));
+    const free = state.data.brands.filter((b) => !taken.has(b.toLowerCase()));
+    if (!free.length) return toast(state.data.brands.length ? 'Every brand already has a supplier' : 'Add an LPG product first', true);
+    const own = s && free.find((b) => s.brands.some((x) => x.toLowerCase() === b.toLowerCase()));
     formDialog({
       title: s ? `Edit ${s.name}` : 'New supplier',
       submit: s ? 'Save changes' : 'Add supplier',
       fields: [
         { name: 'name', label: 'Name', value: s && s.name, required: true, full: true, placeholder: 'e.g. Petron depot' },
         { name: 'contact', label: 'Contact', value: s && s.contact, full: true, placeholder: 'Phone or person' },
-        { name: 'brands', label: 'Brands they refill', value: s ? s.brands.join(', ') : '', required: true, full: true,
-          help: brands.length ? `Separate with commas. Your brands: ${brands.join(', ')}` : 'Separate with commas' },
+        { name: 'brand', label: 'Brand', type: 'select', required: true, full: true, value: own || free[0],
+          options: free.map((b) => ({ value: b, label: b })), help: 'A supplier refills only its own brand.' },
         { name: 'note', label: 'Note (optional)', value: s && s.note, full: true, placeholder: 'e.g. picks up Mon/Thu, 2-day turnaround' },
       ],
       onSubmit: (v) => s
@@ -1039,7 +1043,7 @@
   }
 
   async function deleteSupplier(s) {
-    const ok = await confirmDialog(`Delete ${s.name}?`, 'Its brands will show as “No supplier set”. Past refill trips stay in the history.');
+    const ok = await confirmDialog(`Delete ${s.name}?`, 'Its brand will show as “No supplier set”. Past refill trips stay in the history.');
     if (ok) mutate('DELETE', '/api/suppliers/' + s.id, null, 'Supplier deleted').catch((e) => toast(e.message, true));
   }
 

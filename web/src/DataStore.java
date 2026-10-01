@@ -19,7 +19,8 @@ import java.util.function.Predicate;
  * Receipts.csv        id,dateTime,customerId,staff,discount,paidAtSale,note
  * Payments.csv        id,dateTime,receiptId,customerId,amount,staff,note
  * StockMovements.csv  id,dateTime,lpgId,type,loadedDelta,emptyDelta,staff,note[,damagedDelta,refillerDelta,refillId,unitCost]
- * Suppliers.csv       id,name,contact,brands,note       brands separated by ";"
+ * Suppliers.csv       id,name,contact,brand,note        each supplier refills only its own brand
+ *                                                        (rows from earlier test builds may list several, separated by ";")
  * Refills.csv         id,dateTime,supplierId,staff,note  one row per trip to the refiller
  * SupplierPayments.csv id,dateTime,supplierId,refillId,kind,amount,staff,note   money paid to refillers/suppliers
  *
@@ -580,11 +581,17 @@ final class DataStore {
     String deleteSupplier(String id) {
         synchronized (lock) {
             if (supplier(id) == null) return "Supplier not found";
-            boolean open = refills().stream().anyMatch(r -> r.supplierId().equals(id)
-                    && refillItems(r.id()).stream().anyMatch(i -> i.outstanding() > 0));
-            if (open) return "Tanks are still at this refiller. Receive them first.";
+            if (hasTanksOut(id)) return "Tanks are still at this refiller. Receive them first.";
             suppliers.remove(id);
             return null;
+        }
+    }
+
+    /** True when some tanks sent to this supplier haven't come back yet. */
+    boolean hasTanksOut(String supplierId) {
+        synchronized (lock) {
+            return refills().stream().anyMatch(r -> r.supplierId().equals(supplierId)
+                    && refillItems(r.id()).stream().anyMatch(i -> i.outstanding() > 0));
         }
     }
 
