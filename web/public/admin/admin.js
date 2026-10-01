@@ -241,9 +241,12 @@
       h('div', { class: 'grow' },
         h('div', { class: 'name' }, u.username, u.online ? h('span', { class: 'pill via' }, h('span', { class: 'dot good' }), 'online') : null),
         h('div', { class: 'meta' }, 'Added ' + fmtTime(u.created) + (u.dashboard ? ' · sees the dashboard' : ''))),
-      // The admin chooses who may open the summary dashboard in the POS.
-      h('button', { class: 'btn small' + (u.dashboard ? '' : ' ghost'), 'aria-pressed': String(u.dashboard), title: 'Let this person see the sales and stock summary in the POS',
-        onclick: () => setDashboard(u.username, !u.dashboard) }, u.dashboard ? 'Dashboard: on' : 'Dashboard: off'),
+      // The admin chooses who may open the summary dashboard in the POS: an on/off switch.
+      h('label', { class: 'switch', title: 'Let this person see the sales and stock dashboard in the POS' },
+        h('input', { type: 'checkbox', role: 'switch', checked: u.dashboard, 'aria-label': `Dashboard for ${u.username}`,
+          onchange: (e) => setDashboard(u.username, e.target.checked) }),
+        h('span', { class: 'track', 'aria-hidden': 'true' }),
+        h('span', {}, 'Dashboard')),
       h('button', { class: 'btn small ghost', onclick: () => resetPassword(u.username) }, 'Reset password'),
       h('button', { class: 'btn small ghost danger', onclick: () => deleteUser(u.username) }, 'Delete')))) : h('div', { class: 'empty' }, 'No staff accounts yet. Create one below so staff can sign in.'));
   }
@@ -312,7 +315,7 @@
   function setDashboard(username, on) {
     request('PUT', `/api/users/${encodeURIComponent(username)}/dashboard`, { on: on ? '1' : '0' })
       .then(loadOverview).then(() => toast(on ? `${username} can now see the dashboard` : `${username} no longer sees the dashboard`))
-      .catch((e) => toast(e.message, true));
+      .catch((e) => { toast(e.message, true); loadOverview(); }); // put the switch back to what's saved
   }
 
   async function deleteUser(username) {
@@ -418,6 +421,7 @@
   new ResizeObserver(() => { clearTimeout(resizeTimer); resizeTimer = setTimeout(renderTrend, 80); }).observe($('trend-chart'));
 
   markRange();
+  UI.watchVersion();
   loadOverview();
   loadStats();
   setInterval(() => { if (document.visibilityState === 'visible') loadOverview(); }, 4000);

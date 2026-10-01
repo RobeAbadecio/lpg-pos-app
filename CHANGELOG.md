@@ -4,6 +4,12 @@ Every update gets a new version number. It's shown in the POS (header, account m
 
 Numbering is `major.minor.patch`: **major** when the data or the way staff work changes a lot, **minor** for new features, **patch** for fixes and small changes.
 
+## 3.0.1 — 2026-10-02
+
+- Admin dashboard: dashboard access for each staff account is now a clear on/off **switch**. Before, it was a button that looked like plain text. If saving fails, the switch flips back and says why.
+- A page left open from before an update (a staff phone, the admin tab) shows **"LPG POS x.y.z is ready"** with **Reload** and **Later**. It never reloads by itself, so a half-typed sale isn't lost.
+- Connection problems now say "Can't reach the POS server. Check the internet connection and try again." instead of a technical browser message.
+
 ## 3.0.0 — 2026-10-01
 
 Built from the store's second round of feedback.

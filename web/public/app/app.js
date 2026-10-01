@@ -1270,6 +1270,8 @@
     if (state.me && document.visibilityState === 'visible') refresh().catch(() => {});
   });
 
+  UI.watchVersion();
+
   // Only a failed /api/me means "signed out"; a bug while drawing must not pose as a sign-in prompt.
   request('GET', '/api/me').then(showApp, () => showLogin());
 })();

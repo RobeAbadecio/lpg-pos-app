@@ -4,7 +4,7 @@ A point-of-sale system for an LPG (cooking gas) retail store. Staff record sales
 
 It started as a Java Swing desktop app (`src/`). The web version in `web/` uses the same CSV data, so both read the same files.
 
-**Current version: 3.0.0.** See [CHANGELOG.md](CHANGELOG.md) for what changed in each version. The number is shown in the POS and on the dashboard.
+**Current version: 3.0.1.** See [CHANGELOG.md](CHANGELOG.md) for what changed in each version. The number is shown in the POS and on the dashboard.
 
 ## Features
 

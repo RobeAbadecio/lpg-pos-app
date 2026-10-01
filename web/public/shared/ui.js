@@ -81,7 +81,12 @@
   async function request(method, path, data) {
     const opts = { method, headers: { 'X-LPG': '1' }, credentials: 'same-origin' };
     if (data) opts.body = new URLSearchParams(data);
-    const res = await fetch(path, opts);
+    let res;
+    try {
+      res = await fetch(path, opts);
+    } catch (_) { // no connection: say so in plain words instead of the browser's "Failed to fetch"
+      throw new Error('Can’t reach the POS server. Check the internet connection and try again.');
+    }
     let body = null;
     try { body = await res.json(); } catch (_) { /* empty body */ }
     if (!res.ok) {
@@ -195,5 +200,28 @@
     return formDialog({ title, message, submit, danger: true, onSubmit: () => true });
   }
 
-  window.UI = { h, clear, append, peso, pesoRound, count, compactPeso, parseTime, fmtTime, ago, toast, request, formDialog, confirmDialog, openDialog };
+  // Pages stay open for days (staff phones, the admin tab). When the server has a newer version
+  // than the one running here, offer a reload. Never automatic: a sale might be half typed, so
+  // "Later" puts it off for half an hour.
+  function watchVersion() {
+    let bar = null, snoozeUntil = 0;
+    const check = async () => {
+      if (bar || Date.now() < snoozeUntil || document.visibilityState !== 'visible' || !window.LPG_VERSION) return;
+      try {
+        const text = await fetch('/shared/version.js', { cache: 'no-store' }).then((r) => r.text());
+        const m = text.match(/LPG_VERSION = '([^']+)'/);
+        if (bar || !m || m[1] === window.LPG_VERSION) return;
+        bar = h('div', { class: 'update-bar', role: 'status' },
+          h('span', {}, `LPG POS ${m[1]} is ready. Reload to start using it.`),
+          h('div', { class: 'update-actions' },
+            h('button', { type: 'button', class: 'btn small ghost', onclick: () => { bar.remove(); bar = null; snoozeUntil = Date.now() + 30 * 60 * 1000; } }, 'Later'),
+            h('button', { type: 'button', class: 'btn small primary', onclick: () => location.reload() }, 'Reload')));
+        document.body.append(bar);
+      } catch (_) { /* offline: try again later */ }
+    };
+    setInterval(check, 60000);
+    document.addEventListener('visibilitychange', check);
+  }
+
+  window.UI = { h, clear, append, peso, pesoRound, count, compactPeso, parseTime, fmtTime, ago, toast, request, formDialog, confirmDialog, openDialog, watchVersion };
 })();

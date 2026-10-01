@@ -183,3 +183,14 @@ dialog.modal::backdrop { background: rgba(0, 0, 0, .35); }
 
 .delta-pos { color: var(--good-ink); font-weight: 600; }
 .delta-neg { color: var(--critical); font-weight: 600; }
+
+/* "New version ready" bar */
+.update-bar {
+  position: fixed; z-index: 60; top: 12px; left: 50%; transform: translateX(-50%);
+  display: flex; align-items: center; gap: 12px; max-width: calc(100vw - 24px);
+  padding: 8px 8px 8px 14px; border-radius: 12px; font-size: 14px;
+  background: var(--surface); color: var(--ink); border: 1px solid var(--border-strong);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .18);
+}
+.update-actions { display: flex; gap: 6px; flex: none; }
+@media (max-width: 480px) { .update-bar { left: 12px; right: 12px; transform: none; flex-wrap: wrap; } .update-actions { margin-left: auto; } }
