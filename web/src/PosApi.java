@@ -71,12 +71,21 @@ final class PosApi implements Http.Handler {
         String who = s.username, ip = r.clientIp();
         switch (route) {
             case "GET me" -> r.json(200, me(s));
+            case "GET summary" -> {
+                // Only staff the admin has chosen may see the business summary.
+                DataStore.User u = store.user(who);
+                if (u == null || !u.dashboard()) throw new Http.Error(403, "Ask the admin for access to the dashboard");
+                String range = r.query().getOrDefault("range", "7");
+                if (!List.of("today", "7", "30", "90", "all").contains(range)) range = "7";
+                r.json(200, Json.obj("stats", Stats.compute(store, range), "inventory", Stats.inventory(store),
+                        "receivables", Stats.receivables(store), "tanksOut", Stats.tanksOut(store)));
+            }
             case "POST me/:id" -> changePassword(r, s, id);
             case "GET data" -> {
                 String etag = '"' + store.version() + '"';
                 if (r.notModified(etag)) return;
                 r.addHeader("ETag", etag);
-                r.json(200, data());
+                r.json(200, data(who));
             }
 
             // ---- customers
@@ -92,6 +101,16 @@ final class PosApi implements Http.Handler {
                 log.add(who, ip, "Edited customer #" + id);
                 r.json(200, Json.obj("ok", true));
             }
+            case "POST customers/:id/returns" -> {
+                DataStore.Customer c = store.customer(id);
+                if (c == null) throw new Http.Error(404, "Customer not found");
+                DataStore.Product p = productParam(r, "productId");
+                int qty = whole(r.param("qty"), "Tanks returned", 1, 1_000);
+                String remark = limit(r.param("remark"), 120, "Remark");
+                store.returnTanks(c, p, qty, who, remark);
+                log.add(who, ip, c.name() + " returned " + qty + " empty " + p.label() + (remark.isEmpty() ? "" : " [" + remark + "]"));
+                r.json(201, Json.obj("ok", true));
+            }
             case "DELETE customers/:id" -> {
                 int result = store.deleteCustomer(id);
                 if (result < 0) throw new Http.Error(404, "Customer not found");
@@ -105,7 +124,7 @@ final class PosApi implements Http.Handler {
                 ProductFields f = productFields(r);
                 int loaded = whole(r.param("openingLoaded"), "Tanks with load on hand", 0, 10_000);
                 int empty = whole(r.param("openingEmpty"), "Empty tanks on hand", 0, 10_000);
-                DataStore.Product p = store.addProduct(f.toProduct(null));
+                DataStore.Product p = store.addProduct(f.toProduct(null, 0));
                 log.add(who, ip, "Added product #" + p.id() + " " + p.label());
                 if (loaded > 0 || empty > 0) {
                     store.addMovement(p, "count", loaded, empty, 0, 0, who, "Opening stock", null);
@@ -115,10 +134,11 @@ final class PosApi implements Http.Handler {
             }
             case "PUT products/:id" -> {
                 ProductFields f = productFields(r);
-                if (!store.updateProduct(f.toProduct(id))) throw new Http.Error(404, "Product not found");
+                DataStore.Product old = store.product(id);
+                if (old == null || !store.updateProduct(f.toProduct(id, old.tankPrice()))) throw new Http.Error(404, "Product not found");
                 log.add(who, ip, "Edited product #" + id + " (refill ₱" + DataStore.money(f.price)
-                        + (f.tankPrice > 0 ? ", new tank ₱" + DataStore.money(f.tankPrice) : "")
-                        + (f.refillCost > 0 ? ", refill cost ₱" + DataStore.money(f.refillCost) : "") + ")");
+                        + (f.refillCost > 0 ? ", refill cost ₱" + DataStore.money(f.refillCost) : "")
+                        + (f.swapFee > 0 ? ", swap fee ₱" + DataStore.money(f.swapFee) : "") + ")");
                 r.json(200, Json.obj("ok", true));
             }
             case "DELETE products/:id" -> {
@@ -175,6 +195,17 @@ final class PosApi implements Http.Handler {
                 if (why != null) throw new Http.Error(why.equals("Supplier not found") ? 404 : 409, why);
                 log.add(who, ip, "Deleted supplier " + sup.name());
                 r.json(200, Json.obj("ok", true));
+            }
+            case "POST suppliers/:id/pay" -> {
+                DataStore.Supplier sup = store.supplier(id);
+                if (sup == null) throw new Http.Error(404, "Supplier not found");
+                double amount = DataStore.round(number(r.param("amount"), "Amount", 0.01, 100_000_000));
+                String note = limit(r.param("note"), 120, "Note");
+                List<DataStore.SupplierPayment> parts = store.paySupplier(sup, amount, who, note);
+                log.add(who, ip, "Paid ₱" + DataStore.money(amount) + " to " + sup.name() + " ("
+                        + parts.stream().map(x -> x.refillId().startsWith("P") ? "new tanks" : "trip #" + x.refillId()).collect(Collectors.joining(", "))
+                        + ")" + (note.isEmpty() ? "" : " (" + note + ")"));
+                r.json(201, Json.obj("ok", true));
             }
             case "POST refills" -> {
                 DataStore.Supplier sup = store.supplier(r.param("supplierId"));
@@ -248,9 +279,11 @@ final class PosApi implements Http.Handler {
             case "purchase" -> {
                 int qty = whole(r.param("qty"), "Tanks bought", 1, 1_000);
                 double cost = r.param("unitCost").isEmpty() ? p.tankCost() : DataStore.round(number(r.param("unitCost"), "Cost per tank", 0, 1_000_000));
-                store.purchase(p, qty, cost, who, note);
+                double bill = DataStore.round(qty * cost);
+                double paid = r.param("paid").isEmpty() ? bill : DataStore.round(number(r.param("paid"), "Amount paid", 0, 100_000_000));
+                store.purchase(p, qty, cost, paid, who, note);
                 log.add(who, ip, "Bought " + qty + " new " + p.label() + " tanks with load"
-                        + (cost > 0 ? " for ₱" + DataStore.money(qty * cost) : "") + suffix);
+                        + (cost > 0 ? " for ₱" + DataStore.money(bill) + (paid < bill - 0.005 ? " (paid ₱" + DataStore.money(paid) + ", rest later)" : "") : "") + suffix);
             }
             case "adjust" -> {
                 int loaded = whole(r.param("loaded"), "Tanks with load", 0, 10_000);
@@ -338,7 +371,8 @@ final class PosApi implements Http.Handler {
     }
 
     private Map<String, Object> me(Auth.Session s) {
-        return Json.obj("username", s.username, "demo", autoUser != null);
+        DataStore.User u = store.user(s.username);
+        return Json.obj("username", s.username, "demo", autoUser != null, "dashboard", u != null && u.dashboard());
     }
 
     // ---------------------------------------------------------------- data
@@ -362,6 +396,7 @@ final class PosApi implements Http.Handler {
         };
 
         Map<String, Integer> receiptsByCustomer = new HashMap<>();
+        Map<String, String> lastByCustomer = new HashMap<>();
         Map<String, Double> owedByCustomer = new HashMap<>();
         Map<String, Integer> soldByProduct = new HashMap<>();
         List<Object> receiptOut = new ArrayList<>();
@@ -370,6 +405,7 @@ final class PosApi implements Http.Handler {
             double bal = DataStore.balance(rc, paid);
             double got = DataStore.round(paid.getOrDefault(rc.id(), 0.0));
             receiptsByCustomer.merge(rc.customerId(), 1, Integer::sum);
+            lastByCustomer.putIfAbsent(rc.customerId(), rc.rawTime()); // newest first, so the first one seen is the latest
             if (bal > 0) owedByCustomer.merge(rc.customerId(), bal, Double::sum);
             List<Object> lineOut = new ArrayList<>();
             for (DataStore.Line l : rc.lines()) {
@@ -377,7 +413,7 @@ final class PosApi implements Http.Handler {
                 lineOut.add(Json.obj("productId", l.productId(), "product", productName.apply(l.productId()), "qty", l.qty(),
                         "unitPrice", l.unitPrice(), "amount", DataStore.round(l.amount()),
                         "emptyProductId", l.emptyProductId(), "emptyProduct", l.returnedEmpty() ? productName.apply(l.emptyProductId()) : null,
-                        "remark", l.remark()));
+                        "owesTank", l.owesTank(), "newTank", l.newTank(), "swapFee", l.swapFee(), "remark", l.remark()));
             }
             List<Object> payOut = new ArrayList<>();
             for (DataStore.Payment p : payByReceipt.getOrDefault(rc.id(), List.of())) {
@@ -394,19 +430,27 @@ final class PosApi implements Http.Handler {
                     "note", rc.note(), "payments", payOut));
         }
 
+        Map<String, List<DataStore.OwedTank>> owedTanks = store.owedTanks();
         List<Object> custOut = new ArrayList<>();
         for (DataStore.Customer c : customers) {
+            List<Object> owedOut = new ArrayList<>();
+            int tanks = 0;
+            for (DataStore.OwedTank o : owedTanks.getOrDefault(c.id(), List.of())) {
+                tanks += o.qty();
+                owedOut.add(Json.obj("productId", o.productId(), "product", productName.apply(o.productId()), "qty", o.qty(),
+                        "receiptId", o.receiptId(), "time", o.rawTime()));
+            }
             custOut.add(Json.obj("id", c.id(), "firstName", c.firstName(), "lastName", c.lastName(),
                     "contact", c.contact(), "address", c.address(), "receipts", receiptsByCustomer.getOrDefault(c.id(), 0),
-                    "balance", DataStore.round(owedByCustomer.getOrDefault(c.id(), 0.0))));
+                    "balance", DataStore.round(owedByCustomer.getOrDefault(c.id(), 0.0)),
+                    "lastPurchase", lastByCustomer.get(c.id()), "tanksOwed", tanks, "owedTanks", owedOut));
         }
         List<Object> prodOut = new ArrayList<>();
         for (DataStore.Product p : products) {
             DataStore.Stock st = stock.getOrDefault(p.id(), DataStore.Stock.NONE);
             DataStore.Supplier sup = suppliers.stream().filter(x -> x.supplies(p.brand())).findFirst().orElse(null);
             prodOut.add(Json.obj("id", p.id(), "brand", p.brand(), "weight", p.weight(), "label", p.label(),
-                    "price", p.price(), "tankPrice", p.priceFor(false), "tankPriceSet", p.tankPrice() > 0,
-                    "refillCost", p.refillCost(), "tankCost", p.tankCost(),
+                    "price", p.price(), "swapFee", p.swapFee(), "refillCost", p.refillCost(), "tankCost", p.tankCost(),
                     "reorderLevel", p.reorderLevel(), "sold", soldByProduct.getOrDefault(p.id(), 0),
                     "loaded", st.loaded(), "empty", st.empty(), "damaged", st.damaged(), "atRefiller", st.atRefiller(),
                     "status", stockStatus(st, p.reorderLevel()),
@@ -424,9 +468,26 @@ final class PosApi implements Http.Handler {
 
         Map<String, DataStore.Supplier> supById = suppliers.stream()
                 .collect(Collectors.toMap(DataStore.Supplier::id, Function.identity(), (a, b) -> a));
+        List<DataStore.Bill> bills = store.bills();
         List<Object> supOut = new ArrayList<>();
         for (DataStore.Supplier sup : suppliers) {
-            supOut.add(Json.obj("id", sup.id(), "name", sup.name(), "contact", sup.contact(), "brands", sup.brands(), "note", sup.note()));
+            List<Object> unpaid = new ArrayList<>();
+            double owed = 0;
+            for (DataStore.Bill b : bills) {
+                if (!b.supplierId().equals(sup.id()) || b.owed() <= 0) continue;
+                owed += b.owed();
+                unpaid.add(Json.obj("label", b.label(), "time", b.rawTime(), "cost", b.cost(), "paid", b.paid(), "owed", b.owed()));
+            }
+            supOut.add(Json.obj("id", sup.id(), "name", sup.name(), "contact", sup.contact(), "brands", sup.brands(), "note", sup.note(),
+                    "owed", DataStore.round(owed), "bills", unpaid));
+        }
+        List<DataStore.TankReturn> returns = store.tankReturns();
+        List<Object> returnOut = new ArrayList<>();
+        for (int i = returns.size() - 1; i >= 0 && returnOut.size() < 30; i--) {
+            DataStore.TankReturn t = returns.get(i);
+            DataStore.Customer c = custById.get(t.customerId());
+            returnOut.add(Json.obj("time", t.rawTime(), "customerId", t.customerId(), "customer", c == null ? "Deleted customer #" + t.customerId() : c.name(),
+                    "productId", t.productId(), "product", productName.apply(t.productId()), "qty", t.qty(), "staff", t.staff(), "remark", t.remark()));
         }
         List<DataStore.Refill> refills = store.refills();
         List<Object> refillOut = new ArrayList<>();
@@ -450,7 +511,15 @@ final class PosApi implements Http.Handler {
         }
         List<String> brands = products.stream().map(DataStore.Product::brand).distinct().sorted(String.CASE_INSENSITIVE_ORDER).toList();
         return Json.obj("customers", custOut, "products", prodOut, "receipts", receiptOut, "movements", moveOut,
-                "suppliers", supOut, "refills", refillOut, "brands", brands);
+                "suppliers", supOut, "refills", refillOut, "brands", brands, "returns", returnOut);
+    }
+
+    /** data() for one viewer: adds their own permissions, which the ETag also covers (WebUsers.csv is in it). */
+    private Map<String, Object> data(String username) {
+        Map<String, Object> d = data();
+        DataStore.User u = store.user(username);
+        d.put("me", Json.obj("dashboard", u != null && u.dashboard()));
+        return d;
     }
 
     // ---------------------------------------------------------------- describing receipts
@@ -461,8 +530,9 @@ final class PosApi implements Http.Handler {
         for (DataStore.Line l : rc.lines()) {
             DataStore.Product p = prods.get(l.productId());
             String label = p == null ? "#" + l.productId() : p.label();
-            String swap = !l.returnedEmpty() ? " (new tank)"
-                    : !l.emptyProductId().equals(l.productId()) ? " (empty " + Optional.ofNullable(prods.get(l.emptyProductId())).map(DataStore.Product::label).orElse("?") + ")"
+            String swap = l.owesTank() ? " (no empty, owes the tank)" : l.newTank() ? " (new tank)"
+                    : !l.emptyProductId().equals(l.productId()) ? " (empty " + Optional.ofNullable(prods.get(l.emptyProductId())).map(DataStore.Product::label).orElse("?")
+                    + (l.swapFee() > 0 ? ", swap fee ₱" + DataStore.money(l.swapFee()) + " each" : "") + ")"
                     : "";
             parts.add(l.qty() + " × " + label + swap + (l.remark().isEmpty() ? "" : " [" + l.remark() + "]"));
         }
@@ -491,10 +561,10 @@ final class PosApi implements Http.Handler {
         return new String[]{first, last, contact, address};
     }
 
-    private record ProductFields(String brand, double price, double weight, int reorderLevel, double tankPrice,
-                                 double refillCost, double tankCost) {
-        DataStore.Product toProduct(String id) {
-            return new DataStore.Product(id, brand, price, weight, reorderLevel, tankPrice, refillCost, tankCost);
+    private record ProductFields(String brand, double price, double weight, int reorderLevel,
+                                 double refillCost, double tankCost, double swapFee) {
+        DataStore.Product toProduct(String id, double tankPrice) {
+            return new DataStore.Product(id, brand, price, weight, reorderLevel, tankPrice, refillCost, tankCost, swapFee);
         }
     }
 
@@ -503,13 +573,13 @@ final class PosApi implements Http.Handler {
         if (brand.isEmpty()) throw new Http.Error(400, "Brand is required");
         if (brand.contains(";")) throw new Http.Error(400, "Brand can't contain a semicolon");
         double price = number(r.param("price"), "Refill price", 0.01, 1_000_000);
-        double tankPrice = r.param("tankPrice").isEmpty() ? 0 : number(r.param("tankPrice"), "New tank price", 0.01, 1_000_000);
         double weight = number(r.param("weight"), "Weight", 0.1, 1_000);
         int reorder = whole(r.param("reorderLevel").isEmpty() ? "5" : r.param("reorderLevel"), "Reorder level", 0, 1_000);
         double refillCost = r.param("refillCost").isEmpty() ? 0 : number(r.param("refillCost"), "Refill cost", 0, 1_000_000);
         double tankCost = r.param("tankCost").isEmpty() ? 0 : number(r.param("tankCost"), "New tank cost", 0, 1_000_000);
-        return new ProductFields(brand, DataStore.round(price), weight, reorder, DataStore.round(tankPrice),
-                DataStore.round(refillCost), DataStore.round(tankCost));
+        double swapFee = r.param("swapFee").isEmpty() ? 0 : number(r.param("swapFee"), "Swap fee", 0, 1_000_000);
+        return new ProductFields(brand, DataStore.round(price), weight, reorder,
+                DataStore.round(refillCost), DataStore.round(tankCost), DataStore.round(swapFee));
     }
 
     private record ReceiptFields(DataStore.Customer customer, List<DataStore.LineInput> items, double discount, double paid, String note) {}
@@ -524,14 +594,24 @@ final class PosApi implements Http.Handler {
             DataStore.Product p = productParam(r, "productId." + i);
             int qty = whole(r.param("qty." + i), "Quantity", 1, 100);
             double unit = r.param("unitPrice." + i).isEmpty() ? -1 : number(r.param("unitPrice." + i), "Price", 0, 1_000_000);
+            // The empty that came in: the same product, another brand of the same size (a swap), or
+            // none, in which case the customer owes the tank and brings it back later.
             String emptyId = r.param("emptyId." + i);
-            if (!emptyId.isEmpty() && store.product(emptyId) == null) throw new Http.Error(400, "Unknown empty tank type");
+            double fee = 0;
+            if (!emptyId.isEmpty()) {
+                DataStore.Product e = store.product(emptyId);
+                if (e == null) throw new Http.Error(400, "Unknown empty tank type");
+                if (e.weight() != p.weight()) throw new Http.Error(400, "The empty for " + p.label() + " must be the same size (" + DataStore.fmtKg(p.weight()) + " kg)");
+                if (!e.brand().equalsIgnoreCase(p.brand())) {
+                    fee = r.param("swapFee." + i).isEmpty() ? p.swapFee() : number(r.param("swapFee." + i), "Swap fee", 0, 1_000_000);
+                }
+            }
             String remark = limit(r.param("remark." + i), 80, "Remark");
-            if (unit < 0) unit = p.priceFor(!emptyId.isEmpty());
-            items.add(new DataStore.LineInput(p, qty, DataStore.round(unit), emptyId, remark));
+            if (unit < 0) unit = p.price();
+            items.add(new DataStore.LineInput(p, qty, DataStore.round(unit), emptyId, remark, DataStore.round(fee)));
         }
         double discount = r.param("discount").isEmpty() ? 0 : number(r.param("discount"), "Discount", 0, 10_000_000);
-        double subtotal = items.stream().mapToDouble(i -> i.qty() * i.unitPrice()).sum();
+        double subtotal = items.stream().mapToDouble(DataStore.LineInput::amount).sum();
         double total = DataStore.round(Math.max(0, subtotal - discount));
         double paid = r.param("paid").isEmpty() ? total : number(r.param("paid"), "Amount paid", 0, 10_000_000);
         return new ReceiptFields(c, items, DataStore.round(discount), DataStore.round(paid), limit(r.param("note"), 160, "Note"));

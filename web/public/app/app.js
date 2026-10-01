@@ -3,11 +3,12 @@
   const { h, clear, peso, count, toast, request, formDialog, confirmDialog, openDialog, fmtTime } = UI;
   const $ = (id) => document.getElementById(id);
 
-  const EMPTY_DATA = { customers: [], products: [], receipts: [], movements: [], suppliers: [], refills: [], brands: [] };
+  const EMPTY_DATA = { customers: [], products: [], receipts: [], movements: [], suppliers: [], refills: [], brands: [], returns: [], me: null };
   // own: tanks the receipt being edited already holds, so they count as available again.
   // laterPaid: payments recorded after the sale on the receipt being edited.
-  const newSale = () => ({ customerId: null, lines: [], discount: '', pay: 'full', paidNow: '', cash: '', note: '', editing: null, own: {}, laterPaid: 0 });
-  const state = { me: null, data: EMPTY_DATA, etag: null, view: 'sell', sale: newSale(), historyFilter: 'all' };
+  // lastCustomerId: who the items were added for, so switching customers starts a fresh receipt.
+  const newSale = () => ({ customerId: null, lastCustomerId: null, lines: [], discount: '', pay: 'full', paidNow: '', cash: '', note: '', editing: null, own: {}, laterPaid: 0 });
+  const state = { me: null, data: EMPTY_DATA, etag: null, view: 'sell', sale: newSale(), historyFilter: 'all', summary: null, summaryRange: '7', summaryAt: 0 };
   let lineKey = 0;
 
   // ------------------------------------------------------------------ API
@@ -34,7 +35,10 @@
     if (!res.ok) throw new Error(`Couldn’t load data (${res.status})`);
     state.data = await res.json();
     state.etag = res.headers.get('ETag');
+    if (state.data.me && state.me) state.me.dashboard = !!state.data.me.dashboard; // the admin can change it any time
     updateBadges();
+    updateDashboardAccess();
+    if (state.view === 'dashboard' && !state.me.dashboard) return go('sell');
     render(true);
   }
 
@@ -68,7 +72,13 @@
     $('change-password').hidden = !!me.demo;
     $('logout').hidden = !!me.demo;
     $('demo-note').hidden = !me.demo;
+    updateDashboardAccess();
     go(location.hash.slice(1) || 'sell');
+  }
+
+  // The Dashboard tab shows only for staff the admin has allowed to see it.
+  function updateDashboardAccess() {
+    for (const t of document.querySelectorAll('.tab[data-view="dashboard"]')) t.hidden = !(state.me && state.me.dashboard);
   }
 
   $('login-form').addEventListener('submit', async (e) => {
@@ -111,10 +121,10 @@
 
   // ------------------------------------------------------------------ navigation
 
-  const VIEWS = ['sell', 'history', 'customers', 'products', 'inventory'];
+  const VIEWS = ['sell', 'history', 'customers', 'products', 'inventory', 'dashboard'];
 
   function go(view) {
-    if (!VIEWS.includes(view)) view = 'sell';
+    if (!VIEWS.includes(view) || (view === 'dashboard' && !(state.me && state.me.dashboard))) view = 'sell';
     state.view = view;
     if (location.hash.slice(1) !== view) history.replaceState(null, '', '#' + view);
     for (const s of document.querySelectorAll('.view')) s.hidden = s.id !== 'view-' + view;
@@ -137,7 +147,7 @@
   // passive: a background refresh. The sale screen then leaves the receipt being typed alone.
   function render(passive) {
     if (!state.me) return;
-    ({ sell: renderSell, history: renderHistory, customers: renderCustomers, products: renderProducts, inventory: renderInventory })[state.view](passive);
+    ({ sell: renderSell, history: renderHistory, customers: renderCustomers, products: renderProducts, inventory: renderInventory, dashboard: renderDashboard })[state.view](passive);
     updateCartBar();
   }
 
@@ -169,7 +179,16 @@
   const stockPill = (p) => pill(p.status, ...STOCK[p.status]);
   const payPill = (status) => pill(...PAY[status]);
   const stockText = (p) => p.status === 'out' ? 'No tanks with load' : p.status === 'low' ? `Low · ${p.loaded} with load` : `${p.loaded} with load`;
-  const itemsText = (r) => r.lines.map((l) => `${l.qty} × ${l.product}`).join(', ');
+  const itemsText = (r) => r.lines.map((l) => `${l.qty} × ${l.product}${l.owesTank ? ' (no empty)' : ''}`).join(', ');
+  const lastText = (c) => c.lastPurchase ? `Last bought ${fmtTime(c.lastPurchase)}` : 'No purchases yet';
+  const tanksBadge = (c) => c.tanksOwed > 0 ? h('span', { class: 'owes' }, `Owes ${plural(c.tanksOwed, 'tank')}`) : null;
+  const kgOf = (n) => `${count.format(round2(n))} kg`;
+  // "3 × Petron Gasul 11.0 kg, 1 × Solane 11.0 kg": a customer's owed tanks added up per product.
+  const tanksText = (c) => {
+    const by = new Map();
+    for (const o of c.owedTanks) by.set(o.product, (by.get(o.product) || 0) + o.qty);
+    return [...by].map(([p, n]) => `${n} × ${p}`).join(', ');
+  };
   const owedText = (r) => r.status === 'paid' ? 'Paid' : r.status === 'partial' ? `Owes ${peso.format(r.balance)}` : `Unpaid ${peso.format(r.balance)}`;
 
   // On phones each row collapses to: title + figure, one detail line, then the actions.
@@ -207,8 +226,23 @@
   $('sell-search').addEventListener('input', renderCustomerPick);
   $('quick-customer').addEventListener('click', async () => {
     const id = await customerDialog();
-    if (id) { state.sale.customerId = id; $('sell-search').value = ''; renderCustomerPick(); renderTotals(); }
+    if (id) { $('sell-search').value = ''; chooseCustomer(id); }
   });
+
+  // Each customer starts with an empty receipt: picking someone else clears the items added so far.
+  function chooseCustomer(id) {
+    const sale = state.sale;
+    if (!sale.editing && sale.lastCustomerId && sale.lastCustomerId !== id && sale.lines.length) {
+      Object.assign(sale, { lines: [], discount: '', pay: 'full', paidNow: '', cash: '', note: '' });
+      syncSaleInputs();
+      toast('New receipt started for this customer');
+    }
+    sale.customerId = id;
+    sale.lastCustomerId = id;
+    renderCustomerPick();
+    renderCart();
+    renderTiles();
+  }
 
   function renderCustomerPick() {
     const { customers, receipts } = state.data;
@@ -219,8 +253,9 @@
     clear($('sell-selected'), chosen ? h('div', { class: 'pick selected-customer' },
       h('span', { class: 'avatar' }, initials(chosen)),
       h('div', {},
-        h('div', { class: 'name' }, fullName(chosen), chosen.balance > 0 ? h('span', { class: 'owes' }, `Owes ${peso.format(chosen.balance)}`) : null),
-        h('div', { class: 'meta' }, [chosen.contact, chosen.address].filter(Boolean).join(' · ') || 'No contact details')),
+        h('div', { class: 'name' }, fullName(chosen), chosen.balance > 0 ? h('span', { class: 'owes' }, `Owes ${peso.format(chosen.balance)}`) : null, tanksBadge(chosen)),
+        h('div', { class: 'meta' }, [chosen.contact, chosen.address].filter(Boolean).join(' · ') || 'No contact details'),
+        h('div', { class: 'meta' }, lastText(chosen))),
       h('button', { class: 'btn small', onclick: () => { sale.customerId = null; renderCustomerPick(); renderTotals(); $('sell-search').focus(); } }, 'Change')) : null);
     if (chosen) return;
 
@@ -236,11 +271,12 @@
     }
     const shown = list.slice(0, 6);
     clear($('sell-results'),
-      shown.map((c) => h('button', { class: 'pick', onclick: () => { sale.customerId = c.id; renderCustomerPick(); renderTotals(); } },
+      shown.map((c) => h('button', { class: 'pick', onclick: () => chooseCustomer(c.id) },
         h('span', { class: 'avatar' }, initials(c)),
         h('div', {},
-          h('div', { class: 'name' }, fullName(c), c.balance > 0 ? h('span', { class: 'owes' }, `Owes ${peso.format(c.balance)}`) : null),
-          h('div', { class: 'meta' }, [c.contact, c.address].filter(Boolean).join(' · ') || '—')),
+          h('div', { class: 'name' }, fullName(c), c.balance > 0 ? h('span', { class: 'owes' }, `Owes ${peso.format(c.balance)}`) : null, tanksBadge(c)),
+          h('div', { class: 'meta' }, [c.contact, c.address].filter(Boolean).join(' · ') || '—'),
+          h('div', { class: 'meta' }, lastText(c))),
         h('span', { class: 'muted' }, '#' + c.id))),
       !customers.length ? h('div', { class: 'empty' }, 'No customers yet. Tap “+ New” to add one.')
         : !shown.length ? h('div', { class: 'empty' }, 'No customer matches “' + q + '”.')
@@ -267,7 +303,6 @@
       h('span', { class: 'brand-name' }, p.brand),
       h('span', { class: 'kg' }, kg(p.weight)),
       h('span', { class: 'price num' }, peso.format(p.price)),
-      p.tankPriceSet ? h('span', { class: 'tank-price' }, `New tank ${peso.format(p.tankPrice)}`) : null,
       h('span', { class: 'stock ' + (left <= 0 && n ? 'out' : p.status) }, n ? `${left} more with load` : stockText(p)),
       n ? h('span', { class: 'in-cart', 'aria-hidden': 'true' }, n) : null);
     }) : h('div', { class: 'empty' }, 'No LPG products yet. Add them in the Products tab.'));
@@ -278,7 +313,7 @@
     if (inCart(p.id) + 1 > available(p.id)) return toast(`Only ${available(p.id)} × ${p.label} with load`, true);
     const same = sale.lines.find((l) => l.productId === p.id && l.emptyId === p.id && !l.remark && !l.priceEdited);
     if (same) same.qty++;
-    else sale.lines.push({ key: ++lineKey, productId: p.id, qty: 1, unitPrice: p.price, priceEdited: false, emptyId: p.id, remark: '' });
+    else sale.lines.push({ key: ++lineKey, productId: p.id, qty: 1, unitPrice: p.price, priceEdited: false, emptyId: p.id, swapFee: p.swapFee || 0, remark: '' });
     renderCart();
     renderTiles();
   }
@@ -291,15 +326,22 @@
     return Math.min(max, Math.max(1, n));
   }
 
-  function emptyOptions(p) {
-    const others = state.data.products.filter((x) => x.id !== p.id);
-    const sameSize = others.filter((x) => x.weight === p.weight);
-    const rest = others.filter((x) => x.weight !== p.weight);
+  // A swap: the customer's empty is another brand, which costs extra (the swap fee, per tank).
+  const isSwap = (l) => {
+    const p = byId(state.data.products, l.productId), e = l.emptyId && byId(state.data.products, l.emptyId);
+    return !!(p && e && e.brand.toLowerCase() !== p.brand.toLowerCase());
+  };
+  const lineAmount = (l) => l.qty * (l.unitPrice + (isSwap(l) ? l.swapFee || 0 : 0));
+
+  // The empty that comes in: the same tank, another brand of the same size, or none (the customer owes it).
+  function emptyOptions(p, current) {
+    const others = state.data.products.filter((x) => x.id !== p.id && x.weight === p.weight);
+    const odd = current && current !== p.id && !others.some((x) => x.id === current) && byId(state.data.products, current);
     return [
       h('option', { value: p.id }, `Same: ${p.label}`),
-      sameSize.length ? h('optgroup', { label: 'Other brand, same size' }, sameSize.map((x) => h('option', { value: x.id }, x.label))) : null,
-      rest.length ? h('optgroup', { label: 'Other size' }, rest.map((x) => h('option', { value: x.id }, x.label))) : null,
-      h('option', { value: '' }, 'None — new tank'),
+      others.length ? h('optgroup', { label: 'Another brand (swap fee applies)' }, others.map((x) => h('option', { value: x.id }, x.label))) : null,
+      odd ? h('option', { value: odd.id }, `${odd.label} (different size, change it)`) : null,
+      h('option', { value: '' }, 'None: will bring a tank back later'),
     ];
   }
 
@@ -307,7 +349,11 @@
     const p = byId(state.data.products, l.productId);
     if (!p) return null;
     const amount = h('span', { class: 'num line-amount' });
-    const showAmount = () => { amount.textContent = peso.format(l.qty * l.unitPrice); };
+    const owesNote = h('div', { class: 'cl-row owe-note' });
+    const showAmount = () => {
+      amount.textContent = peso.format(lineAmount(l));
+      owesNote.textContent = `No empty in: ${byId(state.data.customers, state.sale.customerId) ? fullName(byId(state.data.customers, state.sale.customerId)) : 'the customer'} owes ${plural(l.qty, 'tank')} and brings ${l.qty === 1 ? 'it' : 'them'} back later.`;
+    };
     showAmount();
 
     const qty = h('input', { class: 'input num', type: 'number', min: 1, max: 100, step: 1, inputmode: 'numeric', 'aria-label': `Quantity of ${p.label}` });
@@ -334,16 +380,26 @@
     const remark = h('input', { class: 'input', maxlength: 80, placeholder: 'Remark on tank condition (optional)', 'aria-label': `Remark on the condition of ${p.label}` });
     remark.value = l.remark;
     remark.addEventListener('input', () => { l.remark = remark.value; });
-    const empty = h('select', { class: 'input', 'aria-label': `Empty tank returned for ${p.label}` }, emptyOptions(p));
+    const fee = h('input', { class: 'input num', inputmode: 'decimal', 'aria-label': `Swap fee per tank for ${p.label}` });
+    fee.value = (l.swapFee || 0).toFixed(2);
+    fee.addEventListener('input', () => {
+      const v = parseMoney(fee.value);
+      if (!Number.isNaN(v) && v >= 0) { l.swapFee = round2(v); showAmount(); renderTotals(); }
+    });
+    fee.addEventListener('blur', () => { fee.value = (l.swapFee || 0).toFixed(2); });
+    const swapRow = h('label', { class: 'cl-row swap-row' }, h('span', { class: 'muted' }, 'Swap fee ₱'), fee, h('small', { class: 'muted' }, 'each, for another brand'));
+    const empty = h('select', { class: 'input', 'aria-label': `Empty tank returned for ${p.label}` }, emptyOptions(p, l.emptyId));
     empty.value = l.emptyId;
+    const showEmpty = () => {
+      swapRow.hidden = !isSwap(l);
+      owesNote.hidden = !!l.emptyId;
+    };
+    showEmpty();
     empty.addEventListener('change', () => {
       l.emptyId = empty.value;
-      if (!l.priceEdited) { // refill price with an empty, new-tank price without
-        l.unitPrice = l.emptyId ? p.price : p.tankPrice;
-        price.value = l.unitPrice.toFixed(2);
-        showAmount();
-        renderTotals();
-      }
+      showEmpty();
+      showAmount();
+      renderTotals();
     });
 
     return h('div', { class: 'cart-line' },
@@ -359,6 +415,7 @@
         h('label', { class: 'price-wrap' }, h('span', { class: 'muted' }, '× ₱'), price),
         amount),
       h('div', { class: 'cl-row empty-row' }, h('span', { class: 'muted' }, 'Empty in:'), empty),
+      swapRow, owesNote,
       h('div', { class: 'cl-row remark-row' }, remark));
   }
 
@@ -371,7 +428,7 @@
 
   function totals() {
     const sale = state.sale;
-    const subtotal = round2(sale.lines.reduce((s, l) => s + l.qty * l.unitPrice, 0));
+    const subtotal = round2(sale.lines.reduce((s, l) => s + lineAmount(l), 0));
     let discount = 0;
     let discountError = null;
     const d = sale.discount.trim();
@@ -475,7 +532,7 @@
     sale.lines.forEach((l, i) => {
       Object.assign(body, {
         ['productId.' + i]: l.productId, ['qty.' + i]: l.qty, ['unitPrice.' + i]: l.unitPrice,
-        ['emptyId.' + i]: l.emptyId, ['remark.' + i]: l.remark.trim(),
+        ['emptyId.' + i]: l.emptyId, ['swapFee.' + i]: isSwap(l) ? l.swapFee || 0 : '', ['remark.' + i]: l.remark.trim(),
       });
     });
     const btn = $('process');
@@ -512,8 +569,8 @@
 
   // ------------------------------------------------------------------ receipts
 
-  const emptyText = (l) => !l.emptyProductId ? 'New tank (no empty in)'
-    : l.emptyProductId === l.productId ? 'Empty in' : `Empty in: ${l.emptyProduct}`;
+  const emptyText = (l) => l.owesTank ? 'No empty in: owes the tank' : l.newTank ? 'New tank (no empty in)'
+    : l.emptyProductId === l.productId ? 'Empty in' : `Empty in: ${l.emptyProduct} (swap)`;
 
   function receiptView(rc) {
     const row = (label, value, cls) => h('div', { class: 'rc-row' + (cls ? ' ' + cls : '') }, h('span', {}, label), h('span', { class: 'num' }, value));
@@ -523,6 +580,7 @@
       h('div', { class: 'rc-meta' }, `Customer: ${rc.customer}`),
       h('div', { class: 'rc-lines' }, rc.lines.map((l) => h('div', { class: 'rc-line' },
         h('div', {}, h('div', {}, `${l.qty} × ${l.product}`), h('div', { class: 'rc-sub' }, `${peso.format(l.unitPrice)} each · ${emptyText(l)}`),
+          l.swapFee ? h('div', { class: 'rc-sub' }, `Swap fee ${peso.format(l.swapFee)} each`) : null,
           l.remark ? h('div', { class: 'rc-sub rc-remark' }, `Remark: ${l.remark}`) : null),
         h('span', { class: 'num' }, peso.format(l.amount))))),
       h('div', { class: 'rc-totals' },
@@ -546,6 +604,7 @@
   function showReceipt(id) {
     const rc = state.data.receipts.find((r) => r.id === String(id));
     if (!rc) return;
+    const cust = byId(state.data.customers, rc.customerId);
     openDialog({
       title: `Receipt #${rc.id}`,
       submit: null,
@@ -555,6 +614,7 @@
         h('button', { type: 'button', class: 'btn danger', onclick: () => { close(); voidReceipt(rc); } }, 'Void'),
         h('button', { type: 'button', class: 'btn', onclick: () => { close(); editReceipt(rc); } }, 'Edit'),
         h('button', { type: 'button', class: 'btn', onclick: () => printReceipt(rc) }, 'Print'),
+        cust && cust.tanksOwed > 0 ? h('button', { type: 'button', class: 'btn', onclick: () => { close(); returnDialog(cust); } }, 'Collect tank') : null,
         rc.balance > 0 ? h('button', { type: 'button', class: 'btn primary', onclick: () => { close(); paymentDialog({ receipt: rc }); } }, 'Record payment') : null,
       ],
     });
@@ -566,8 +626,9 @@
     sale.customerId = rc.customerId;
     sale.lines = rc.lines.map((l) => ({
       key: ++lineKey, productId: l.productId, qty: l.qty, unitPrice: l.unitPrice, priceEdited: true,
-      emptyId: l.emptyProductId || '', remark: l.remark || '',
+      emptyId: l.emptyProductId || '', swapFee: l.swapFee || 0, remark: l.remark || '',
     }));
+    sale.lastCustomerId = rc.customerId;
     for (const l of rc.lines) sale.own[l.productId] = (sale.own[l.productId] || 0) + l.qty;
     sale.discount = rc.discount ? String(rc.discount) : '';
     sale.laterPaid = round2(rc.paid - rc.paidAtSale);
@@ -650,20 +711,52 @@
     const rows = all.filter((c) => matches(q, c.id, fullName(c), c.contact, c.address));
     const owing = all.filter((c) => c.balance > 0);
     const owed = owing.reduce((s, c) => s + c.balance, 0);
-    $('customers-summary').textContent = `${plural(all.length, 'customer')}${owed > 0 ? ` · ${peso.format(owed)} unpaid by ${plural(owing.length, 'customer')}` : ''}`;
+    const tanksOut = all.reduce((n, c) => n + c.tanksOwed, 0);
+    $('customers-summary').textContent = `${plural(all.length, 'customer')}${owed > 0 ? ` · ${peso.format(owed)} unpaid by ${plural(owing.length, 'customer')}` : ''}${tanksOut ? ` · ${plural(tanksOut, 'tank')} not returned` : ''}`;
     clear($('customers-table'), table([
       { label: '#', render: (c) => c.id, cls: 'muted num', sm: 'hide' },
       { label: 'Name', render: (c) => fullName(c), sm: 'title' },
       { label: 'Contact', render: (c) => c.contact || '—', sm: 'hide' },
       { label: 'Address', render: (c) => c.address || '—', sm: 'hide' },
-      { label: 'Receipts', right: true, render: (c) => c.receipts, sm: 'hide' },
+      { label: 'Last purchase', render: (c) => c.lastPurchase ? fmtTime(c.lastPurchase) : '—', sm: 'hide', cls: 'nowrap' },
+      { label: 'Tanks out', right: true, render: (c) => c.tanksOwed ? h('span', { class: 'owes-text', title: tanksText(c) }, count.format(c.tanksOwed)) : '—', sm: 'hide' },
       { label: 'Balance', right: true, render: (c) => c.balance > 0 ? h('span', { class: 'owes-text' }, peso.format(c.balance)) : '—', sm: 'figure' },
       { label: '', cls: 'actions', render: (c) => actions(
+        c.tanksOwed > 0 ? h('button', { class: 'btn small ghost', onclick: () => returnDialog(c) }, 'Collect tank') : null,
         c.balance > 0 ? h('button', { class: 'btn small ghost', onclick: () => paymentDialog({ customer: c }) }, 'Collect payment') : null,
         h('button', { class: 'btn small ghost', onclick: () => customerDialog(c) }, 'Edit'),
         h('button', { class: 'btn small ghost danger', onclick: () => deleteCustomer(c) }, 'Delete')) },
     ], rows, q ? 'No customers match your search.' : 'No customers yet.',
-    (c) => [c.contact, c.address, plural(c.receipts, 'receipt')].filter(Boolean).join(' · ')));
+    (c) => [c.contact, lastText(c), c.tanksOwed ? `owes ${plural(c.tanksOwed, 'tank')}` : null].filter(Boolean).join(' · ')));
+  }
+
+  // Empties brought back by a customer who took tanks without one. Another brand is accepted (say so in the remark).
+  function returnDialog(c) {
+    if (!c.tanksOwed) return toast(`${fullName(c)} doesn’t owe any tanks`, true);
+    const first = byId(state.data.products, c.owedTanks[0].productId) || state.data.products[0];
+    formDialog({
+      title: `Collect tank from ${fullName(c)}`,
+      message: `Owes ${plural(c.tanksOwed, 'tank')}: ` + c.owedTanks.map((o) => `${o.qty} × ${o.product} (receipt #${o.receiptId}, ${fmtTime(o.time)})`).join('; ') + '.',
+      submit: 'Record return',
+      fields: [
+        { name: 'productId', label: 'Empty tank brought back', type: 'select', full: true, value: first.id, options: productOptions((x) => x.label) },
+        { name: 'qty', label: 'How many', type: 'number', min: 1, max: c.tanksOwed, step: 1, value: c.tanksOwed, required: true, inputmode: 'numeric' },
+        { name: 'remark', label: 'Remark', full: true, placeholder: 'e.g. brought Solane instead of Petron; dented' },
+      ],
+      extra: (inputs) => {
+        const hint = h('p', { class: 'warn-note', hidden: true });
+        const check = () => {
+          const x = byId(state.data.products, inputs.productId.value);
+          const brands = new Set(c.owedTanks.map((o) => byId(state.data.products, o.productId)?.brand.toLowerCase()));
+          hint.hidden = !x || brands.has(x.brand.toLowerCase());
+          hint.textContent = x ? `${x.brand} isn’t the brand they took. That’s fine; add a remark about it.` : '';
+        };
+        inputs.productId.addEventListener('change', check);
+        check();
+        return hint;
+      },
+      onSubmit: (v) => mutate('POST', `/api/customers/${encodeURIComponent(c.id)}/returns`, v, `${fullName(c)} returned ${plural(Number(v.qty), 'tank')}`),
+    });
   }
 
   function customerDialog(c) {
@@ -704,7 +797,7 @@
       { label: 'Brand', render: (p) => p.brand, sm: 'title' },
       { label: 'Weight', right: true, render: (p) => kg(p.weight), sm: 'hide' },
       { label: 'Refill price', right: true, render: (p) => peso.format(p.price), sm: 'figure' },
-      { label: 'New tank price', right: true, render: (p) => p.tankPriceSet ? peso.format(p.tankPrice) : h('span', { class: 'muted' }, 'Not set'), sm: 'hide' },
+      { label: 'Swap fee', right: true, render: (p) => p.swapFee ? peso.format(p.swapFee) : h('span', { class: 'muted' }, 'None'), sm: 'hide' },
       { label: 'Refill cost', right: true, render: (p) => p.refillCost ? peso.format(p.refillCost) : h('span', { class: 'muted' }, 'Not set'), sm: 'hide' },
       { label: 'Margin', right: true, render: (p) => p.refillCost ? peso.format(p.price - p.refillCost) : '—', sm: 'hide' },
       { label: 'Sold', right: true, render: (p) => count.format(p.sold), sm: 'hide' },
@@ -713,7 +806,7 @@
         h('button', { class: 'btn small ghost', onclick: () => productDialog(p) }, 'Edit'),
         h('button', { class: 'btn small ghost danger', onclick: () => deleteProduct(p) }, 'Delete')) },
     ], all, 'No LPG products yet.',
-    (p) => `${kg(p.weight)} · new tank ${p.tankPriceSet ? peso.format(p.tankPrice) : 'not set'} · refill cost ${p.refillCost ? peso.format(p.refillCost) : 'not set'} · ${count.format(p.sold)} sold · ${stockText(p)}`));
+    (p) => `${kg(p.weight)} · swap fee ${p.swapFee ? peso.format(p.swapFee) : 'none'} · refill cost ${p.refillCost ? peso.format(p.refillCost) : 'not set'} · ${count.format(p.sold)} sold · ${stockText(p)}`));
   }
 
   function productDialog(p) {
@@ -727,13 +820,13 @@
         { name: 'reorderLevel', label: 'Reorder level', type: 'number', step: 1, min: 0, value: p ? p.reorderLevel : 5, inputmode: 'numeric',
           help: 'Low when tanks with load drop to this' },
         { name: 'price', label: 'Refill price (₱)', type: 'number', step: '0.01', min: '0.01', value: p && p.price, required: true, inputmode: 'decimal',
-          help: 'Customer brings an empty tank' },
-        { name: 'tankPrice', label: 'New tank price (₱)', type: 'number', step: '0.01', min: '0.01', value: p && p.tankPriceSet ? p.tankPrice : '', inputmode: 'decimal',
-          help: 'No empty in; includes the tank' },
+          help: 'Price per tank' },
+        { name: 'swapFee', label: 'Swap fee (₱)', type: 'number', step: '0.01', min: '0', value: p && p.swapFee ? p.swapFee : '', inputmode: 'decimal',
+          help: 'Extra per tank when the empty is another brand' },
         { name: 'refillCost', label: 'Refill cost (₱)', type: 'number', step: '0.01', min: '0', value: p && p.refillCost ? p.refillCost : '', inputmode: 'decimal',
           help: 'What the refiller charges per tank' },
         { name: 'tankCost', label: 'New tank cost (₱)', type: 'number', step: '0.01', min: '0', value: p && p.tankCost ? p.tankCost : '', inputmode: 'decimal',
-          help: 'What you pay for a new tank with load' },
+          help: 'What you pay when you buy a new tank' },
         ...(p ? [] : [
           { name: 'openingLoaded', label: 'With load on hand now', type: 'number', step: 1, min: 0, value: 0, inputmode: 'numeric' },
           { name: 'openingEmpty', label: 'Empty tanks on hand now', type: 'number', step: 1, min: 0, value: 0, inputmode: 'numeric' },
@@ -780,7 +873,33 @@
         h('p', {}, attention.map((p) => `${p.label}: ${p.loaded <= 0 ? 'none with load' : p.loaded + ' with load'}${p.empty ? `, ${p.empty} empty to send` : ''}`).join(' · ')))) : null);
 
     const sum = (k) => products.reduce((n, p) => n + Math.max(0, p[k]), 0);
-    $('inventory-summary').textContent = `${count.format(sum('loaded'))} with load · ${count.format(sum('empty'))} empty · ${count.format(sum('atRefiller'))} at refiller`;
+    const kgLoaded = products.reduce((n, p) => n + Math.max(0, p.loaded) * p.weight, 0);
+    $('inventory-summary').textContent = `${count.format(sum('loaded'))} with load · ${count.format(sum('empty'))} empty · ${count.format(sum('atRefiller'))} at refiller · ${kgOf(kgLoaded)} of LPG`;
+    // Totals per tank size (kg), across brands.
+    const sizes = [];
+    for (const p of [...products].sort((a, b) => a.weight - b.weight)) {
+      let s = sizes.find((x) => x.weight === p.weight);
+      if (!s) sizes.push(s = { weight: p.weight, loaded: 0, empty: 0, atRefiller: 0, kgLoaded: 0 });
+      s.loaded += Math.max(0, p.loaded);
+      s.empty += Math.max(0, p.empty);
+      s.atRefiller += Math.max(0, p.atRefiller);
+      s.kgLoaded = round2(s.loaded * s.weight);
+    }
+    Charts.sizeTable($('size-totals'), sizes, round2(kgLoaded));
+
+    const out = state.data.customers.filter((c) => c.tanksOwed > 0).sort((a, b) => b.tanksOwed - a.tanksOwed);
+    $('tanks-out-sub').textContent = out.length ? `${plural(out.reduce((n, c) => n + c.tanksOwed, 0), 'tank')} with ${plural(out.length, 'customer')}` : 'Customers who took a tank without an empty';
+    clear($('tanks-out'),
+      out.length ? h('div', { class: 'list' }, out.map((c) => h('div', { class: 'supplier-row' },
+        h('div', {}, h('strong', {}, fullName(c)),
+          h('div', { class: 'meta' }, `${tanksText(c)} · since ${fmtTime(c.owedTanks[0].time)}`),
+          c.contact ? h('div', { class: 'meta' }, c.contact) : null),
+        actions(h('button', { class: 'btn small', onclick: () => returnDialog(c) }, 'Collect tank'))))) : h('div', { class: 'empty' }, 'Every tank has come back.'),
+      state.data.returns.length ? h('h3', { class: 'minor-head' }, 'Recently returned') : null,
+      state.data.returns.length ? h('div', { class: 'moves' }, state.data.returns.slice(0, 8).map((t) => h('div', { class: 'move' },
+        h('div', {}, h('strong', {}, t.customer), ` · ${t.qty} × ${t.product}`),
+        h('div', { class: 'num secondary' }, `+${t.qty} empty`),
+        h('div', { class: 'meta' }, [fmtTime(t.time), t.staff, t.remark].filter(Boolean).join(' · '))))) : null);
 
     // Group the stock table by supplier, so each refiller's brands sit together.
     const groups = suppliers.map((s) => ({ s, items: products.filter((p) => p.supplierId === s.id) })).filter((g) => g.items.length);
@@ -830,8 +949,10 @@
         h('div', {},
           h('strong', {}, s.name),
           h('div', { class: 'meta' }, [s.contact, s.brands.join(', ')].filter(Boolean).join(' · ')),
-          s.note ? h('div', { class: 'meta' }, s.note) : null),
+          s.note ? h('div', { class: 'meta' }, s.note) : null,
+          s.owed > 0 ? h('div', { class: 'meta owes-text' }, `Owes ${peso.format(s.owed)} (${plural(s.bills.length, 'bill')})`) : null),
         actions(
+          s.owed > 0 ? h('button', { class: 'btn small', onclick: () => paySupplierDialog(s) }, 'Pay') : null,
           h('button', { class: 'btn small ghost', onclick: () => supplierDialog(s) }, 'Edit'),
           h('button', { class: 'btn small ghost danger', onclick: () => deleteSupplier(s) }, 'Delete'))))) : h('div', { class: 'empty' }, 'No suppliers yet. Add who refills each brand.'));
 
@@ -959,24 +1080,32 @@
     if (!needProducts()) return;
     formDialog({
       title: 'Buy new tanks',
-      message: 'Brand-new tanks with load from the supplier (no empties swapped).',
+      message: 'Brand-new tanks with load from the supplier (no empties swapped). Pay now, or pay part and the rest later.',
       submit: 'Add to stock',
       fields: [
         { name: 'productId', label: 'LPG product', type: 'select', full: true, value: (p || state.data.products[0]).id, options: productOptions((x) => `${x.label} (${x.loaded} with load)`) },
         { name: 'qty', label: 'Tanks bought', type: 'number', min: 1, step: 1, required: true, inputmode: 'numeric' },
         { name: 'unitCost', label: 'Cost per tank (₱)', type: 'number', min: 0, step: '0.01', inputmode: 'decimal', value: (p || state.data.products[0]).tankCost || '' },
+        { name: 'paid', label: 'Paid to supplier now (₱)', type: 'number', min: 0, step: '0.01', inputmode: 'decimal', full: true },
         { name: 'note', label: 'Note (optional)', full: true, placeholder: 'e.g. supplier, receipt no.' },
       ],
-      // Picking another product fills in its usual new-tank cost.
+      // Picking another product fills in its usual new-tank cost; "paid" follows the bill until typed in.
       extra: (inputs) => {
+        let paidEdited = false;
+        inputs.paid.addEventListener('input', () => { paidEdited = true; show(); });
         inputs.productId.addEventListener('change', () => {
           const x = byId(state.data.products, inputs.productId.value);
           if (x) inputs.unitCost.value = x.tankCost || '';
         });
         const total = h('p', { class: 'cost-line' });
         const show = () => {
-          const t = (Number(inputs.qty.value) || 0) * (Number(inputs.unitCost.value) || 0);
-          clear(total, h('span', {}, 'Paid to supplier'), h('strong', { class: 'num' }, peso.format(t)));
+          const t = round2((Number(inputs.qty.value) || 0) * (Number(inputs.unitCost.value) || 0));
+          if (!paidEdited) inputs.paid.value = t ? t.toFixed(2) : '';
+          const left = round2(t - (Number(inputs.paid.value) || 0));
+          const x = byId(state.data.products, inputs.productId.value);
+          clear(total, h('span', {}, 'Bill'), h('strong', { class: 'num' }, peso.format(t)),
+            left > 0 ? h('small', { class: 'owes-text' }, ` · ${peso.format(left)} to pay later${x && x.supplier ? ` (owed to ${x.supplier})` : ''}`) : null,
+            left < 0 ? h('small', { class: 'error-text' }, ` Paid is ${peso.format(-left)} more than the bill`) : null);
         };
         inputs.qty.addEventListener('input', show);
         inputs.unitCost.addEventListener('input', show);
@@ -985,6 +1114,20 @@
         return total;
       },
       onSubmit: (v) => mutate('POST', '/api/stock/purchase', v, `Added ${v.qty} new tanks`),
+    });
+  }
+
+  // Pays what a supplier is owed (refill trips and new tanks), oldest bills first.
+  function paySupplierDialog(s) {
+    formDialog({
+      title: `Pay ${s.name}`,
+      message: `Owed ${peso.format(s.owed)}: ` + s.bills.map((b) => `${b.label} (${fmtTime(b.time)}) ${peso.format(b.owed)}`).join('; ') + '. Oldest bills are paid first.',
+      submit: 'Record payment',
+      fields: [
+        { name: 'amount', label: 'Amount paid (₱)', type: 'number', min: '0.01', step: '0.01', value: s.owed.toFixed(2), required: true, inputmode: 'decimal', full: true },
+        { name: 'note', label: 'Note (optional)', full: true, placeholder: 'e.g. cash, bank transfer ref.' },
+      ],
+      onSubmit: (v) => mutate('POST', `/api/suppliers/${encodeURIComponent(s.id)}/pay`, v, `Paid ${peso.format(Number(v.amount))} to ${s.name}`),
     });
   }
 
@@ -1046,6 +1189,72 @@
     const ok = await confirmDialog(`Delete ${s.name}?`, 'Its brand will show as “No supplier set”. Past refill trips stay in the history.');
     if (ok) mutate('DELETE', '/api/suppliers/' + s.id, null, 'Supplier deleted').catch((e) => toast(e.message, true));
   }
+
+  // ------------------------------------------------------------------ dashboard (staff the admin allows)
+
+  for (const chip of document.querySelectorAll('#view-dashboard [data-range]')) {
+    chip.addEventListener('click', () => { state.summaryRange = chip.dataset.range; state.summaryAt = 0; renderDashboard(); });
+  }
+
+  async function renderDashboard() {
+    for (const c of document.querySelectorAll('#view-dashboard [data-range]')) c.setAttribute('aria-pressed', String(c.dataset.range === state.summaryRange));
+    if (Date.now() - state.summaryAt > 3000) {
+      state.summaryAt = Date.now();
+      $('dash-body').classList.add('loading');
+      try {
+        state.summary = await api('GET', '/api/summary?range=' + encodeURIComponent(state.summaryRange));
+      } catch (e) {
+        if (e.status === 403) { state.me.dashboard = false; updateDashboardAccess(); return go('sell'); }
+        toast(e.message, true);
+      } finally {
+        $('dash-body').classList.remove('loading');
+      }
+    }
+    drawDashboard();
+  }
+
+  function drawDashboard() {
+    const d = state.summary;
+    if (!d || state.view !== 'dashboard') return;
+    const s = d.stats, t = s.totals, p = s.previous, inv = d.inventory;
+    $('d-revenue').textContent = UI.pesoRound.format(t.revenue);
+    Charts.delta($('d-revenue-delta'), t.revenue, p && p.revenue, s.compare);
+    $('d-trend-title').textContent = `Revenue by ${{ hour: 'hour', day: 'day', month: 'month' }[s.bucket]}`;
+    $('d-trend-sub').textContent = s.range === 'today' ? 'Today, hour by hour' : `${Charts.fmtDate(s.start)} – today`;
+    Charts.columnChart($('d-trend'), s.series, s.bucket);
+    const tile = (id, value, cur, prev, upIsBad) => { $(id).textContent = value; Charts.delta($(id + '-delta'), cur, prev, s.compare, upIsBad); };
+    tile('d-count', count.format(t.count), t.count, p && p.count);
+    tile('d-qty', count.format(t.qty), t.qty, p && p.qty);
+    tile('d-collected', UI.pesoRound.format(t.collected), t.collected, p && p.collected);
+    tile('d-supplier', UI.pesoRound.format(t.supplierPaid), t.supplierPaid, p && p.supplierPaid, true);
+    tile('d-profit', t.profit == null ? '—' : UI.pesoRound.format(t.profit), t.profit, p && p.profit);
+    $('d-profit-note').textContent = t.profit == null ? 'Set refill costs in Products to see profit'
+      : s.uncosted.length ? `Leaves out ${s.uncosted.join(', ')} (no refill cost)` : `${t.costedRevenue ? Math.round(t.profit / t.costedRevenue * 100) : 0}% of sales`;
+    Charts.hbars($('d-products'), s.byProduct, (r) => `${count.format(r.qty)} tank${r.qty === 1 ? '' : 's'}`, 'No sales in this period.');
+    $('d-size-sub').textContent = `${count.format(inv.kgLoaded)} kg of LPG with load`;
+    Charts.sizeTable($('d-sizes'), inv.bySize, inv.kgLoaded);
+
+    const owedRow = (name, meta, figure) => h('div', { class: 'owe-row' }, h('div', {}, h('div', {}, name), meta ? h('div', { class: 'meta' }, meta) : null), h('strong', { class: 'num' }, figure));
+    const to = d.tanksOut;
+    $('d-tanks-sub').textContent = to.total ? `${plural(to.total, 'tank')} with ${plural(to.customers, 'customer')}` : 'Every tank has come back';
+    clear($('d-tanks'), to.top.length ? to.top.map((c) => owedRow(c.customer, `${c.items}${c.since ? ` · since ${fmtTime(c.since)}` : ''}`, plural(c.tanks, 'tank')))
+      : h('div', { class: 'empty' }, 'No customer owes a tank.'));
+    const rv = d.receivables;
+    $('d-unpaid-sub').textContent = rv.customers ? `${peso.format(rv.total)} from ${plural(rv.customers, 'customer')}` : 'Nobody owes anything';
+    clear($('d-unpaid'), rv.top.length ? rv.top.map((c) => owedRow(c.customer, `${plural(c.receipts, 'unpaid receipt')}${c.since ? ` · oldest ${fmtTime(c.since)}` : ''}`, peso.format(c.balance)))
+      : h('div', { class: 'empty' }, 'All receipts are paid.'));
+    const owing = inv.suppliers.filter((x) => x.owed > 0);
+    $('d-suppliers-sub').textContent = inv.owedToSuppliers > 0 ? `${peso.format(inv.owedToSuppliers)} still to pay` : 'Suppliers are fully paid';
+    clear($('d-suppliers'), owing.length ? owing.map((x) => owedRow(x.name, x.brands.join(', '), peso.format(x.owed)))
+      : h('div', { class: 'empty' }, 'Nothing owed to suppliers.'));
+    $('d-updated').textContent = 'Updated ' + new Date().toLocaleTimeString('en-PH', { hour: 'numeric', minute: '2-digit' });
+  }
+
+  let dashResize;
+  new ResizeObserver(() => { clearTimeout(dashResize); dashResize = setTimeout(drawDashboard, 80); }).observe($('d-trend'));
+  setInterval(() => {
+    if (state.view === 'dashboard' && document.visibilityState === 'visible') { state.summaryAt = 0; renderDashboard(); }
+  }, 30000);
 
   // ------------------------------------------------------------------ boot
 

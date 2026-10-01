@@ -6,6 +6,7 @@
   <title>LPG POS Admin</title>
   <link rel="icon" href="/shared/icon.svg">
   <link rel="stylesheet" href="/shared/base.css">
+  <link rel="stylesheet" href="/shared/dash.css">
   <link rel="stylesheet" href="/admin.css">
 </head>
 <body>
@@ -107,6 +108,8 @@
         <section class="card">
           <div class="card-head"><div><h2>Inventory</h2><div class="sub" id="inventory-sub"></div></div></div>
           <div id="inventory"></div>
+          <h3 class="minor-head">Tanks by size</h3>
+          <div class="table-wrap" id="by-size"></div>
           <h3 class="minor-head">At the refiller</h3>
           <div id="refills"></div>
           <h3 class="minor-head">Recent stock changes</h3>
@@ -119,12 +122,17 @@
         </section>
 
         <section class="card">
+          <div class="card-head"><div><h2>Tanks not returned</h2><div class="sub" id="tanks-out-sub"></div></div></div>
+          <div id="tanks-out"></div>
+        </section>
+
+        <section class="card">
           <div class="card-head"><div><h2>Signed in now</h2><div class="sub" id="sessions-sub"></div></div></div>
           <div id="sessions"></div>
         </section>
 
         <section class="card">
-          <div class="card-head"><div><h2>Staff accounts</h2><div class="sub">People who can sign in to the POS</div></div></div>
+          <div class="card-head"><div><h2>Staff accounts</h2><div class="sub">People who can sign in to the POS. “Dashboard: on” lets them see the sales and stock summary there too.</div></div></div>
           <div id="users"></div>
           <form id="add-user" class="add-user" autocomplete="off">
             <h3>Add staff account</h3>
@@ -154,6 +162,7 @@
   <div class="tooltip" id="tooltip" role="tooltip" hidden></div>
   <script src="/shared/version.js"></script>
   <script src="/shared/ui.js"></script>
+  <script src="/shared/charts.js"></script>
   <script src="/admin.js"></script>
 </body>
 </html>

@@ -93,6 +93,8 @@ button, input, select { font: inherit; color: inherit; }
 .btn.ghost { border-color: transparent; background: transparent; }
 .btn.ghost:hover { background: var(--surface-2); }
 .btn.small { min-height: 30px; padding: 0 10px; font-size: 13px; }
+/* Touch screens: small buttons still get a comfortable tap target. */
+@media (pointer: coarse) { .btn.small { min-height: 40px; padding: 0 12px; } }
 .btn.block { width: 100%; }
 .btn.lg { min-height: 48px; font-size: 16px; }
 

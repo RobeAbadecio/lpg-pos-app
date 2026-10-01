@@ -1,6 +1,6 @@
 // Release number shown in the POS and the admin dashboard.
 // On every update: bump it, set the date, and add an entry to CHANGELOG.md.
-window.LPG_VERSION = '2.0.1';
+window.LPG_VERSION = '3.0.0';
 window.LPG_RELEASED = '2026-10-01';
 
 (() => {

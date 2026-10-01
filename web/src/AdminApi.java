@@ -77,6 +77,12 @@ final class AdminApi implements Http.Handler {
                 log.add("admin", "this Mac", "Reset password for " + id);
                 r.json(200, Json.obj("ok", true));
             }
+            case "PUT users/:id/dashboard" -> {
+                boolean on = "1".equals(r.param("on"));
+                if (!store.setDashboard(id, on)) throw new Http.Error(404, "No such account");
+                log.add("admin", "this Mac", (on ? "Let " + id + " see the dashboard" : "Removed dashboard access for " + id));
+                r.json(200, Json.obj("ok", true));
+            }
             case "DELETE users/:id" -> {
                 if (!store.deleteUser(id)) throw new Http.Error(404, "No such account");
                 auth.revokeUser(id, null);
@@ -124,7 +130,7 @@ final class AdminApi implements Http.Handler {
         }
         List<Object> users = new ArrayList<>();
         for (DataStore.User u : store.users()) {
-            users.add(Json.obj("username", u.username(), "created", u.created(), "online", online.contains(u.username())));
+            users.add(Json.obj("username", u.username(), "created", u.created(), "online", online.contains(u.username()), "dashboard", u.dashboard()));
         }
         List<Object> activity = new ArrayList<>();
         for (ActivityLog.Entry e : log.latest(60)) {
@@ -143,6 +149,7 @@ final class AdminApi implements Http.Handler {
                 "tunnel", tunnel.info(),
                 "inventory", Stats.inventory(store),
                 "receivables", Stats.receivables(store),
+                "tanksOut", Stats.tanksOut(store),
                 "sessions", sessionOut,
                 "users", users,
                 "activity", activity);

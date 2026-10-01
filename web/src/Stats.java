@@ -6,7 +6,7 @@ import java.util.*;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
-/** Figures for the admin dashboard: sales for a date range, plus current stock and unpaid balances. */
+/** Figures for the dashboards: sales for a date range, plus current stock, unpaid balances and tanks out. */
 final class Stats {
     private Stats() {}
 
@@ -226,8 +226,8 @@ final class Stats {
     }
 
     /**
-     * Estimated cost of a receipt line: the product's current refill cost (or new-tank cost when
-     * no empty came back). Returns -1 for products without a refill cost, which are added to uncosted.
+     * Estimated cost of a receipt line: the product's current refill cost (or new-tank cost for a
+     * new tank sold before 3.0). Returns -1 for products without a refill cost, which are added to uncosted.
      */
     private static double lineCost(DataStore.Line l, Map<String, DataStore.Product> products, Set<String> uncosted) {
         DataStore.Product p = products.get(l.productId());
@@ -236,7 +236,7 @@ final class Stats {
             uncosted.add(p.label());
             return -1;
         }
-        return l.qty() * p.costFor(l.returnedEmpty());
+        return l.qty() * p.costFor(l.newTank());
     }
 
     static String itemsText(DataStore.Receipt r, Map<String, DataStore.Product> products) {
@@ -263,6 +263,7 @@ final class Stats {
         Map<String, DataStore.Product> byId = new HashMap<>();
         List<Map<String, Object>> items = new ArrayList<>();
         int alerts = 0, totalLoaded = 0, totalEmpty = 0, totalDamaged = 0, totalRefiller = 0;
+        Map<Double, int[]> bySize = new TreeMap<>(); // weight -> with load, empty, at refiller
         for (DataStore.Product p : products) {
             byId.put(p.id(), p);
             DataStore.Stock st = stock.getOrDefault(p.id(), DataStore.Stock.NONE);
@@ -277,6 +278,10 @@ final class Stats {
                     "supplierId", sup == null ? null : sup.id(), "supplier", sup == null ? null : sup.name()));
             totalLoaded += Math.max(0, st.loaded());
             totalEmpty += Math.max(0, st.empty());
+            int[] size = bySize.computeIfAbsent(p.weight(), k -> new int[3]);
+            size[0] += Math.max(0, st.loaded());
+            size[1] += Math.max(0, st.empty());
+            size[2] += Math.max(0, st.atRefiller());
             totalDamaged += Math.max(0, st.damaged());
             totalRefiller += Math.max(0, st.atRefiller());
         }
@@ -286,6 +291,14 @@ final class Stats {
             case "low" -> 1;
             default -> 2;
         }).thenComparingDouble(o -> o.get("daysLeft") == null ? Double.MAX_VALUE : (Double) o.get("daysLeft")));
+
+        List<Object> sizes = new ArrayList<>();
+        double kgLoaded = 0;
+        for (var e : bySize.entrySet()) {
+            kgLoaded += e.getKey() * e.getValue()[0];
+            sizes.add(Json.obj("weight", e.getKey(), "loaded", e.getValue()[0], "empty", e.getValue()[1], "atRefiller", e.getValue()[2],
+                    "kgLoaded", DataStore.round(e.getKey() * e.getValue()[0])));
+        }
 
         List<Object> openRefills = new ArrayList<>();
         double owedToRefillers = 0;
@@ -317,12 +330,19 @@ final class Stats {
                     "type", m.type(), "loaded", m.loaded(), "empty", m.empty(), "damaged", m.damaged(), "atRefiller", m.atRefiller(),
                     "staff", m.staff(), "note", m.note()));
         }
+        // What's owed to each supplier: refill trips and new tanks bought, not yet fully paid.
+        Map<String, Double> owedBySupplier = new HashMap<>();
+        for (DataStore.Bill b : store.bills()) if (b.owed() > 0) owedBySupplier.merge(b.supplierId(), b.owed(), Double::sum);
         List<Object> suppliersOut = new ArrayList<>();
-        for (DataStore.Supplier s : suppliers) suppliersOut.add(Json.obj("id", s.id(), "name", s.name(), "contact", s.contact(), "brands", s.brands()));
+        for (DataStore.Supplier s : suppliers) {
+            suppliersOut.add(Json.obj("id", s.id(), "name", s.name(), "contact", s.contact(), "brands", s.brands(),
+                    "owed", DataStore.round(owedBySupplier.getOrDefault(s.id(), 0.0))));
+        }
+        double owedToSuppliers = owedBySupplier.values().stream().mapToDouble(Double::doubleValue).sum();
         return Json.obj("items", items, "alerts", alerts, "totalLoaded", totalLoaded, "totalEmpty", totalEmpty,
                 "totalDamaged", totalDamaged, "totalRefiller", totalRefiller, "refills", openRefills, "movements", recent,
-                "owedToRefillers", DataStore.round(owedToRefillers),
-                "suppliers", suppliersOut);
+                "owedToRefillers", DataStore.round(owedToRefillers), "owedToSuppliers", DataStore.round(owedToSuppliers),
+                "bySize", sizes, "kgLoaded", DataStore.round(kgLoaded), "suppliers", suppliersOut);
     }
 
     /** Who owes money right now, largest balance first. */
@@ -355,6 +375,32 @@ final class Stats {
                     "days", since == null ? null : ChronoUnit.DAYS.between(since.toLocalDate(), LocalDate.now())));
         }
         return Json.obj("total", DataStore.round(total), "customers", owed.size(), "top", out);
+    }
+
+    /** Customers who took tanks without bringing an empty, most tanks first. */
+    static Map<String, Object> tanksOut(DataStore store) {
+        Map<String, DataStore.Customer> customers = store.customers().stream()
+                .collect(Collectors.toMap(DataStore.Customer::id, Function.identity(), (a, b) -> a));
+        Map<String, DataStore.Product> products = store.productMap();
+        List<Map<String, Object>> rows = new ArrayList<>();
+        int total = 0;
+        for (var e : store.owedTanks().entrySet()) {
+            int n = e.getValue().stream().mapToInt(DataStore.OwedTank::qty).sum();
+            total += n;
+            Map<String, Integer> byProduct = new LinkedHashMap<>();
+            for (DataStore.OwedTank o : e.getValue()) {
+                DataStore.Product p = products.get(o.productId());
+                byProduct.merge(p == null ? "#" + o.productId() : p.label(), o.qty(), Integer::sum);
+            }
+            LocalDateTime since = e.getValue().get(0).time();
+            DataStore.Customer c = customers.get(e.getKey());
+            rows.add(Json.obj("customerId", e.getKey(), "customer", c == null ? "Deleted customer #" + e.getKey() : c.name(),
+                    "tanks", n, "items", byProduct.entrySet().stream().map(x -> x.getValue() + " × " + x.getKey()).collect(Collectors.joining(", ")),
+                    "since", since == null ? null : since.format(DataStore.TIME),
+                    "days", since == null ? null : ChronoUnit.DAYS.between(since.toLocalDate(), LocalDate.now())));
+        }
+        rows.sort((a, b) -> Integer.compare((int) b.get("tanks"), (int) a.get("tanks")));
+        return Json.obj("total", total, "customers", rows.size(), "top", rows.subList(0, Math.min(10, rows.size())));
     }
 
     /** Top N by revenue; with foldOther the remainder becomes a single "Other" row. */

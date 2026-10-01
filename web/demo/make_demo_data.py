@@ -26,18 +26,19 @@ STAFF = {  # username: (device user agent, fake IP from a documentation range)
     "carla": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0 Safari/537.36", "192.0.2.61"),
 }
 
-# brand, weight kg, refill price, new-tank price, popularity, reorder level, tanks kept in circulation,
-# refill cost (what the refiller charges per tank), new tank cost
+# brand, weight kg, refill price, swap fee (extra when the empty is another brand), popularity, reorder level,
+# tanks kept in circulation, refill cost (what the refiller charges per tank), new tank cost
 PRODUCTS = [
-    ("Petron Gasul", 11.0, 1045.00, 2850.00, 30, 15, 45, 880.00, 2400.00),
-    ("Solane", 11.0, 1090.00, 2950.00, 24, 12, 40, 925.00, 2480.00),
-    ("Phoenix SuperLPG", 11.0, 1020.00, 2750.00, 14, 8, 25, 860.00, 2300.00),
-    ("Fiesta Gas", 11.0, 1010.00, 2700.00, 10, 6, 20, 850.00, 2250.00),
-    ("Petron Gasul", 22.0, 2090.00, 4900.00, 6, 3, 10, 1780.00, 4200.00),
-    ("Solane", 2.7, 365.00, 1150.00, 9, 5, 18, 295.00, 950.00),
-    ("Petron Gasul", 2.7, 355.00, 1100.00, 5, 4, 12, 285.00, 920.00),
-    ("Petron Gasul", 50.0, 4650.00, 9800.00, 2, 1, 4, 4000.00, 8600.00),
+    ("Petron Gasul", 11.0, 1045.00, 50.00, 30, 15, 45, 880.00, 2400.00),
+    ("Solane", 11.0, 1090.00, 50.00, 24, 12, 40, 925.00, 2480.00),
+    ("Phoenix SuperLPG", 11.0, 1020.00, 50.00, 14, 8, 25, 860.00, 2300.00),
+    ("Fiesta Gas", 11.0, 1010.00, 50.00, 10, 6, 20, 850.00, 2250.00),
+    ("Petron Gasul", 22.0, 2090.00, 80.00, 6, 3, 10, 1780.00, 4200.00),
+    ("Solane", 2.7, 365.00, 20.00, 9, 5, 18, 295.00, 950.00),
+    ("Petron Gasul", 2.7, 355.00, 20.00, 5, 4, 12, 285.00, 920.00),
+    ("Petron Gasul", 50.0, 4650.00, 150.00, 2, 1, 4, 4000.00, 8600.00),
 ]
+DASHBOARD_USERS = {"ana"}  # staff the admin lets see the summary dashboard (ana is the demo's auto sign-in)
 # name, contact (fake 555 numbers), brands, note
 SUPPLIERS = [
     ("Petron depot", "0917 555 0142", ["Petron Gasul"], "Picks up Mon & Thu, back in 2 days"),
@@ -118,7 +119,7 @@ def generate(data_dir):
     new_customers = {57: 6, 58: 4, 59: 2, 60: 0}  # customer id -> days ago they were added
     name = {c[0]: f"{c[1]} {c[2]}" for c in customers}
 
-    products = [[str(i + 1), p[0], money(p[2]), kg(p[1]), str(p[5]), money(p[3]), money(p[7]), money(p[8])] for i, p in enumerate(PRODUCTS)]
+    products = [[str(i + 1), p[0], money(p[2]), kg(p[1]), str(p[5]), "0.00", money(p[7]), money(p[8]), money(p[3])] for i, p in enumerate(PRODUCTS)]
     suppliers = [[str(i + 1), s[0], s[1], "; ".join(s[2]), s[3]] for i, s in enumerate(SUPPLIERS)]
     supplier_of = {i: next(n for n, s in enumerate(SUPPLIERS) if p[0] in s[2]) for i, p in enumerate(PRODUCTS)}
 
@@ -128,8 +129,10 @@ def generate(data_dir):
         step = {0: 0, 1: 30, 2: 50}.get(months_back, 70)
         return round(max(1.0, PRODUCTS[i][7] - step * PRODUCTS[i][1] / 11.0), 2)
 
-    supplier_payments = []  # [time, supplierIdx, tripId, kind, amount, staff, note]
-    later_payments = []  # (due datetime, supplierIdx, tripId, amount)
+    supplier_payments = []  # [time, supplierIdx, tripId or purchase move, kind, amount, staff, note]
+    later_payments = []  # (due datetime, supplierIdx, tripId or purchase move, kind, amount)
+    tank_returns = []  # [time, customerId, productIdx, qty, staff, remark]
+    returns_due = []  # (date, customerId, productIdx owed, qty)
 
     def refill_price(i, day):
         # Monthly LPG price adjustments: earlier months were cheaper.
@@ -186,7 +189,20 @@ def generate(data_dir):
                 else:
                     half = round(bill / 2, 2)
                     supplier_payments.append([when, s_idx, trip["id"], "refill", half, on_shift(when), "Cash, rest next week"])
-                    later_payments.append((when + dt.timedelta(days=rng.randint(3, 8)), s_idx, trip["id"], round(bill - half, 2)))
+                    later_payments.append((when + dt.timedelta(days=rng.randint(3, 8)), s_idx, trip["id"], "refill", round(bill - half, 2)))
+
+        # Customers who took a tank without an empty bring one back, sometimes another brand.
+        for due in [x for x in returns_due if x[0] <= day]:
+            returns_due.remove(due)
+            when = dt.datetime.combine(day, dt.time(rng.randint(8, 18), rng.randint(0, 59)))
+            if when > now:
+                continue
+            _, cust, owed_i, qty = due
+            other = [i for i, p in enumerate(PRODUCTS) if p[1] == PRODUCTS[owed_i][1] and p[0] != PRODUCTS[owed_i][0]]
+            back = rng.choice(other) if other and rng.random() < 0.2 else owed_i
+            remark = f"Brought {PRODUCTS[back][0]} instead of {PRODUCTS[owed_i][0]}" if back != owed_i else rng.choice(["", "", "", "Dented"])
+            empty[back] += qty
+            tank_returns.append([when, cust, back, qty, on_shift(when), remark])
 
         # Mon & Thu: send good empties to each refiller.
         if day.weekday() in (0, 3):
@@ -205,7 +221,8 @@ def generate(data_dir):
                         moves.append([when, i, "refill-send", 0, -n, 0, n, on_shift(when), "", trip_id])
                     trips_due.append({"id": trip_id, "due": day + dt.timedelta(days=2), "items": items})
 
-        # Mondays: buy new tanks to replace those that left as new-tank sales or brand swaps.
+        # Mondays: buy new tanks to replace those still with customers or lost to brand swaps.
+        # Usually paid on the spot; sometimes part now and the rest within two weeks.
         if day.weekday() == 0:
             when = dt.datetime.combine(day, dt.time(8, 15))
             if when <= now:
@@ -215,8 +232,15 @@ def generate(data_dir):
                     if gap > 0 and days_ago >= REFILL_PAUSED.get(i, 0):
                         loaded[i] += gap
                         invoice = f"{SUPPLIERS[supplier_of[i]][0]} invoice #{rng.randint(1000, 9999)}"
-                        moves.append([when, i, "purchase", gap, 0, 0, 0, "ana", invoice, "", p[8]])
-                        supplier_payments.append([when, supplier_of[i], "", "purchase", round(gap * p[8], 2), "ana", invoice])
+                        move = [when, i, "purchase", gap, 0, 0, 0, "ana", invoice, "", p[8]]
+                        moves.append(move)
+                        bill = round(gap * p[8], 2)
+                        if rng.random() < 0.75:
+                            supplier_payments.append([when, supplier_of[i], move, "purchase", bill, "ana", invoice])
+                        else:
+                            half = round(bill / 2, 2)
+                            supplier_payments.append([when, supplier_of[i], move, "purchase", half, "ana", invoice + ", rest later"])
+                            later_payments.append((when + dt.timedelta(days=rng.randint(5, 14)), supplier_of[i], move, "purchase", round(bill - half, 2)))
 
         # Receipts through the day.
         growth = 0.85 + 0.3 * d / 120
@@ -246,23 +270,25 @@ def generate(data_dir):
                     taken = sum(x[1] for x in items if x[0] == pi)
                 qty = min(loaded[pi] - taken, rng.choices([1, 2, 3], [65, 25, 10] if biz else [93, 6, 1])[0])
                 roll = rng.random()
-                if roll < 0.10:
-                    empty_of = None  # new tank: no empty in
-                elif roll < 0.18:
-                    swaps = [i for i, p in enumerate(PRODUCTS) if p[1] == PRODUCTS[pi][1] and i != pi]
+                fee = 0.0
+                if roll < 0.06:
+                    empty_of = None  # no empty in: the customer owes the tank
+                elif roll < 0.14:
+                    swaps = [i for i, p in enumerate(PRODUCTS) if p[1] == PRODUCTS[pi][1] and p[0] != PRODUCTS[pi][0]]
                     empty_of = rng.choice(swaps) if swaps else pi  # brought another brand's empty
+                    fee = PRODUCTS[pi][3] if empty_of != pi else 0.0
                 else:
                     empty_of = pi
                 # Now and then staff note the condition of the tank.
                 remark = rng.choice(["Dented", "Rusty base", "Loose valve", "No seal cap", "Faded paint"]) if rng.random() < 0.04 else ""
-                price = refill_price(pi, day) if empty_of is not None else PRODUCTS[pi][3]
-                if biz and empty_of is not None and rng.random() < 0.3:
+                price = refill_price(pi, day)
+                if biz and rng.random() < 0.3:
                     price -= rng.choice([20, 25, 30])  # regular ("suki") price
-                items.append((pi, qty, round(price, 2), empty_of, remark))
+                items.append((pi, qty, round(price, 2), empty_of, remark, fee))
             if not items:
                 continue
             staff = on_shift(t)
-            subtotal = sum(q * p for _, q, p, _, _ in items)
+            subtotal = sum(q * (p + f) for _, q, p, _, _, f in items)
             discount = 0.0
             if rng.random() < 0.07:
                 discount = rng.choice([20.0, 50.0, 100.0, round(subtotal * 0.05, 2)])
@@ -277,13 +303,16 @@ def generate(data_dir):
             receipt_id = str(rid)
             rid += 1
             receipts.append([receipt_id, t.strftime(TIME), customers[ci][0], staff, money(discount), money(paid), ""])
-            for pi, qty, price, empty_of, remark in items:
+            for pi, qty, price, empty_of, remark, fee in items:
                 loaded[pi] -= qty
                 if empty_of is not None:
                     empty[empty_of] += qty
+                elif rng.random() < 0.8:  # most bring the tank back within three weeks
+                    returns_due.append((day + dt.timedelta(days=rng.randint(1, 21)), customers[ci][0], pi, qty))
                 lines.append([str(lid), customers[ci][0], str(pi + 1), t.strftime(TIME), str(qty), money(price), staff,
                               "0" if empty_of is None else "1", receipt_id,
-                              "" if empty_of is None else str(empty_of + 1), remark])
+                              "" if empty_of is None else str(empty_of + 1), remark,
+                              "1" if empty_of is None else "", money(fee) if fee else ""])
                 lid += 1
             if paid < total:
                 credit.append((receipt_id, customers[ci][0], t, round(total - paid, 2)))
@@ -317,19 +346,26 @@ def generate(data_dir):
     write_csv(os.path.join(data_dir, "StockMovements.csv"),
               [[str(n + 1), m[0].strftime(TIME), str(m[1] + 1), m[2], str(m[3]), str(m[4]), m[7], m[8], str(m[5]), str(m[6]), m[9],
                 money(m[10] if len(m) > 10 else 0)] for n, m in enumerate(moves)])
-    for due, s_idx, trip_id, amount in later_payments:
+    # A purchase's payments carry its bill key: "P" + the purchase's movement id.
+    move_id = {id(m): n + 1 for n, m in enumerate(moves)}
+    bill_key = lambda ref: ref if isinstance(ref, str) else f"P{move_id[id(ref)]}"
+    for due, s_idx, ref, kind, amount in later_payments:
         if due <= now:
-            supplier_payments.append([due, s_idx, trip_id, "refill", amount, on_shift(due), "Balance"])
+            supplier_payments.append([due, s_idx, ref, kind, amount, on_shift(due), "Balance"])
     supplier_payments.sort(key=lambda x: x[0])
     write_csv(os.path.join(data_dir, "SupplierPayments.csv"),
-              [[str(n + 1), x[0].strftime(TIME), str(x[1] + 1), x[2], x[3], money(x[4]), x[5], x[6]] for n, x in enumerate(supplier_payments)])
+              [[str(n + 1), x[0].strftime(TIME), str(x[1] + 1), bill_key(x[2]), x[3], money(x[4]), x[5], x[6]] for n, x in enumerate(supplier_payments)])
+    tank_returns.sort(key=lambda x: x[0])
+    write_csv(os.path.join(data_dir, "TankReturns.csv"),
+              [[str(n + 1), x[0].strftime(TIME), x[1], str(x[2] + 1), str(x[3]), x[4], x[5]] for n, x in enumerate(tank_returns)])
 
     # ---- staff accounts (one shared demo password, written to demo-logins.txt)
     password = "demo-" + secrets.token_hex(3)
     users = []
     for i, u in enumerate(STAFF):
         salt = secrets.token_bytes(16)
-        users.append([u, b64(salt), pbkdf2(password, salt), (now - dt.timedelta(days=125 - i * 3)).strftime(TIME)])
+        users.append([u, b64(salt), pbkdf2(password, salt), (now - dt.timedelta(days=125 - i * 3)).strftime(TIME),
+                      "1" if u in DASHBOARD_USERS else ""])
     write_csv(os.path.join(data_dir, "WebUsers.csv"), users)
     with open(LOGINS, "w") as f:
         f.write("LPG POS demo logins (fake data, demo server only)\n")
@@ -355,9 +391,10 @@ def generate(data_dir):
             log.append((when - dt.timedelta(minutes=2), staff, ip, "Signed in (Internet)"))
         parts = []
         for ln in by_receipt[r[0]]:
-            tail = " (new tank)" if ln[9] == "" else "" if ln[9] == ln[2] else f" (empty {label[int(ln[9]) - 1]})"
+            tail = " (no empty, owes the tank)" if ln[9] == "" else "" if ln[9] == ln[2] \
+                else f" (empty {label[int(ln[9]) - 1]}" + (f", swap fee ₱{ln[12]} each)" if ln[12] else ")")
             parts.append(f"{ln[4]} × {label[int(ln[2]) - 1]}{tail}" + (f" [{ln[10]}]" if ln[10] else ""))
-        total = sum(int(ln[4]) * float(ln[5]) for ln in by_receipt[r[0]]) - float(r[4])
+        total = sum(int(ln[4]) * (float(ln[5]) + float(ln[12] or 0)) for ln in by_receipt[r[0]]) - float(r[4])
         paid = float(r[5])
         pay = ", ₱%s paid" % money(total) if paid >= total - 0.005 else ", ₱%s to pay later" % money(total) if paid == 0 \
             else ", ₱%s (paid ₱%s, ₱%s to pay later)" % (money(total), money(paid), money(total - paid))
@@ -366,6 +403,9 @@ def generate(data_dir):
         when = dt.datetime.strptime(p[1], TIME)
         if when >= cutoff:
             log.append((when, p[5], STAFF[p[5]][1], f"Payment ₱{p[4]} from {name[p[3]]} for receipt #{p[2]}"))
+    for x in tank_returns:
+        if x[0] >= cutoff:
+            log.append((x[0], x[4], STAFF[x[4]][1], f"{name[x[1]]} returned {x[3]} empty {label[x[2]]}" + (f" [{x[5]}]" if x[5] else "")))
     for m in moves:
         if m[0] < cutoff or m[2] not in ("refill-send", "refill-receive", "purchase"):
             continue
@@ -381,7 +421,7 @@ def generate(data_dir):
 
     print(f"Fake data written to {data_dir}: {len(customers)} customers, {len(products)} products, {len(receipts)} receipts "
           f"({len(lines)} items), {len(payments)} payments, {len(refills)} refill trips, {len(supplier_payments)} supplier payments, "
-          f"{len(moves)} stock movements. Logins: {LOGINS}")
+          f"{len(tank_returns)} tank returns, {len(moves)} stock movements. Logins: {LOGINS}")
     print("Stock now (with load/empty/at refiller): " + ", ".join(
         f"{label[i]} {loaded[i]}/{empty[i]}/{at_refiller[i]}" for i in range(len(PRODUCTS))))
 

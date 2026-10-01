@@ -13,22 +13,25 @@ import java.util.function.Predicate;
  * CSV-backed storage shared with the desktop Swing app (same folder, same leading columns).
  *
  * Customers.csv       id,firstName,lastName,contactNo,address
- * LPGs.csv            id,brand,price,weight[,reorderLevel,tankPrice,refillCost,tankCost]
- * Transactions.csv    id,customerId,lpgId,dateTime[,qty,unitPrice,staff,returnedEmpty,receiptId,emptyLpgId,remark]
- *                     one row per receipt line
+ * LPGs.csv            id,brand,price,weight[,reorderLevel,tankPrice,refillCost,tankCost,swapFee]
+ * Transactions.csv    id,customerId,lpgId,dateTime[,qty,unitPrice,staff,returnedEmpty,receiptId,emptyLpgId,remark,owesTank,swapFee]
+ *                     one row per receipt line; owesTank "1": no empty came in, the customer will bring one back
  * Receipts.csv        id,dateTime,customerId,staff,discount,paidAtSale,note
  * Payments.csv        id,dateTime,receiptId,customerId,amount,staff,note
  * StockMovements.csv  id,dateTime,lpgId,type,loadedDelta,emptyDelta,staff,note[,damagedDelta,refillerDelta,refillId,unitCost]
  * Suppliers.csv       id,name,contact,brand,note        each supplier refills only its own brand
  *                                                        (rows from earlier test builds may list several, separated by ";")
  * Refills.csv         id,dateTime,supplierId,staff,note  one row per trip to the refiller
- * SupplierPayments.csv id,dateTime,supplierId,refillId,kind,amount,staff,note   money paid to refillers/suppliers
+ * SupplierPayments.csv id,dateTime,supplierId,refillId,kind,amount,staff,note   money paid to refillers/suppliers;
+ *                     refillId is the trip id, or "P" + the purchase's movement id for new tanks bought
+ * TankReturns.csv     id,dateTime,customerId,lpgId,qty,staff,remark     empties brought back by customers who owed them
+ * WebUsers.csv        username,salt,hash,created[,dashboard]             dashboard "1": may see the summary dashboard
  *
  * Older rows simply lack the trailing columns. A transaction row without a receipt id is a
  * one-line receipt "S<id>", fully paid; without an empty-tank column it took back an empty of
- * the same product unless returnedEmpty is "0"; a product without a tank price sells new
- * tanks at its refill price; a product without costs has unknown costs (0); a movement
- * without the trailing columns touches only the with-load and empty counts.
+ * the same product unless returnedEmpty is "0" (a new tank sold before 3.0, which nobody owes
+ * back); a product without costs has unknown costs (0); a movement without the trailing
+ * columns touches only the with-load and empty counts. tankPrice is no longer used.
  *
  * Money paid out: receiving tanks back from the refiller records what each refill cost (the
  * unitCost on the receive movements) and what was paid; buying new tanks records a payment.
@@ -50,28 +53,30 @@ final class DataStore {
     }
 
     /**
-     * price: refill price (customer swaps in an empty). tankPrice: price when they take a new tank home.
-     * refillCost: what the refiller charges per tank. tankCost: what a new tank with load costs the store.
+     * price: refill price. refillCost: what the refiller charges per tank. tankCost: what a new tank
+     * with load costs the store. swapFee: extra charged per tank when the customer's empty is
+     * another brand. tankPrice (selling new tanks) is no longer used; it's kept so old rows round-trip.
      */
     record Product(String id, String brand, double price, double weight, int reorderLevel, double tankPrice,
-                   double refillCost, double tankCost) {
+                   double refillCost, double tankCost, double swapFee) {
         String label() { return brand + " " + fmtKg(weight) + " kg"; }
 
-        double priceFor(boolean withEmpty) { return withEmpty || tankPrice <= 0 ? price : tankPrice; }
-
         /** What one tank sold this way cost the store (0 when costs aren't set). */
-        double costFor(boolean withEmpty) { return withEmpty || tankCost <= 0 ? refillCost : tankCost; }
+        double costFor(boolean newTank) { return newTank && tankCost > 0 ? tankCost : refillCost; }
     }
 
     /**
-     * One item on a receipt. emptyProductId is "" when no empty tank came back (new tank sale).
-     * remark: staff's note on the tank's condition (e.g. "dented"), may be empty.
+     * One item on a receipt. emptyProductId is the empty that came in, or "" when none did: then
+     * owesTank says the customer will bring one back (otherwise it's a new tank sold before 3.0).
+     * swapFee: extra per tank because the empty was another brand. remark: staff's note, may be empty.
      */
     record Line(String id, String receiptId, String customerId, String productId, String rawTime, LocalDateTime time,
-                int qty, double unitPrice, String staff, String emptyProductId, String remark) {
+                int qty, double unitPrice, String staff, String emptyProductId, String remark, boolean owesTank, double swapFee) {
         boolean returnedEmpty() { return !emptyProductId.isEmpty(); }
 
-        double amount() { return qty * unitPrice; }
+        boolean newTank() { return emptyProductId.isEmpty() && !owesTank; }
+
+        double amount() { return qty * (unitPrice + swapFee); }
     }
 
     record Receipt(String id, String rawTime, LocalDateTime time, String customerId, String staff,
@@ -112,9 +117,28 @@ final class DataStore {
         int outstanding() { return sent - received - rejected; }
     }
 
-    record LineInput(Product product, int qty, double unitPrice, String emptyProductId, String remark) {}
+    record LineInput(Product product, int qty, double unitPrice, String emptyProductId, String remark, double swapFee) {
+        boolean owesTank() { return emptyProductId.isEmpty(); }
 
-    record User(String username, String salt, String hash, String created) {}
+        double amount() { return qty * (unitPrice + swapFee); }
+    }
+
+    /** Empty tanks a customer brought back for tanks they took without one. */
+    record TankReturn(String id, String rawTime, LocalDateTime time, String customerId, String productId, int qty,
+                      String staff, String remark) {}
+
+    /** Tanks a customer still has to bring back, per receipt line (oldest are settled first). */
+    record OwedTank(String customerId, String productId, int qty, String receiptId, String rawTime, LocalDateTime time) {}
+
+    /**
+     * Something the store owes a supplier for: a refill trip (key = trip id) or new tanks bought
+     * (key = "P" + the purchase movement's id).
+     */
+    record Bill(String key, String supplierId, String kind, String label, String rawTime, LocalDateTime time, double cost, double paid) {
+        double owed() { return round(Math.max(0, cost - paid)); }
+    }
+
+    record User(String username, String salt, String hash, String created, boolean dashboard) {}
 
     /** A business rule stopped the change (not enough stock, overpayment...). Shown to staff as-is. */
     static final class Conflict extends RuntimeException {
@@ -125,7 +149,7 @@ final class DataStore {
 
     private final Path dir;
     private final Object lock = new Object();
-    private final Table customers, products, lines, receipts, payments, movements, suppliers, refills, supplierPayments, users;
+    private final Table customers, products, lines, receipts, payments, movements, suppliers, refills, supplierPayments, tankReturns, users;
     private final List<Table> all;
 
     DataStore(Path dir) throws IOException {
@@ -140,8 +164,10 @@ final class DataStore {
         suppliers = new Table("Suppliers.csv");
         refills = new Table("Refills.csv");
         supplierPayments = new Table("SupplierPayments.csv");
+        tankReturns = new Table("TankReturns.csv");
         users = new Table("WebUsers.csv");
-        all = List.of(customers, products, lines, receipts, payments, movements, suppliers, refills, supplierPayments);
+        // users too: the POS data carries the viewer's dashboard permission.
+        all = List.of(customers, products, lines, receipts, payments, movements, suppliers, refills, supplierPayments, tankReturns, users);
     }
 
     Path dir() { return dir; }
@@ -199,7 +225,7 @@ final class DataStore {
             List<Product> out = new ArrayList<>();
             for (String[] r : products.rows()) {
                 out.add(new Product(col(r, 0), col(r, 1), num(col(r, 2), 0), num(col(r, 3), 0),
-                        (int) num(col(r, 4), 5), num(col(r, 5), 0), num(col(r, 6), 0), num(col(r, 7), 0)));
+                        (int) num(col(r, 4), 5), num(col(r, 5), 0), num(col(r, 6), 0), num(col(r, 7), 0), num(col(r, 8), 0)));
             }
             return out;
         }
@@ -218,7 +244,7 @@ final class DataStore {
     Product addProduct(Product p) {
         synchronized (lock) {
             List<String[]> rows = products.copy();
-            Product saved = new Product(nextId(rows), p.brand(), p.price(), p.weight(), p.reorderLevel(), p.tankPrice(), p.refillCost(), p.tankCost());
+            Product saved = new Product(nextId(rows), p.brand(), p.price(), p.weight(), p.reorderLevel(), p.tankPrice(), p.refillCost(), p.tankCost(), p.swapFee());
             rows.add(productRow(saved));
             products.save(rows);
             return saved;
@@ -233,7 +259,7 @@ final class DataStore {
 
     private static String[] productRow(Product p) {
         return new String[]{p.id(), p.brand(), money(p.price()), fmtKg(p.weight()), String.valueOf(p.reorderLevel()),
-                money(p.tankPrice()), money(p.refillCost()), money(p.tankCost())};
+                money(p.tankPrice()), money(p.refillCost()), money(p.tankCost()), money(p.swapFee())};
     }
 
     /**
@@ -250,6 +276,7 @@ final class DataStore {
             if (movements().stream().anyMatch(m -> m.productId().equals(id) && (!m.refillId().isEmpty() || m.unitCost() > 0))) {
                 return "This product has refill or purchase payments on record, so it can't be deleted.";
             }
+            if (tankReturns().stream().anyMatch(t -> t.productId().equals(id))) return "Customers have returned tanks of this product, so it can't be deleted.";
             products.remove(id);
             movements.removeWhere(r -> col(r, 2).equals(id));
             return null;
@@ -280,8 +307,9 @@ final class DataStore {
                     case "damaged" -> "Damaged";
                     default -> col(r, 10);
                 };
+                boolean owes = emptyId.isEmpty() && "1".equals(col(r, 11));
                 out.add(new Line(col(r, 0), receiptIdOf(r), col(r, 1), pid, col(r, 3), parseTime(col(r, 3)),
-                        qty, unit, col(r, 6), emptyId, remark));
+                        qty, unit, col(r, 6), emptyId, remark, owes, emptyId.isEmpty() ? 0 : num(col(r, 12), 0)));
             }
             return out;
         }
@@ -343,7 +371,7 @@ final class DataStore {
     Receipt createReceipt(String customerId, String staff, List<LineInput> items, double discount, double paidNow, String note) {
         synchronized (lock) {
             checkStock(items, Map.of());
-            double subtotal = round(items.stream().mapToDouble(i -> i.qty() * i.unitPrice()).sum());
+            double subtotal = round(items.stream().mapToDouble(LineInput::amount).sum());
             checkMoney(subtotal, discount, paidNow, 0);
             List<String[]> rrows = receipts.copy();
             String id = nextId(rrows);
@@ -363,7 +391,12 @@ final class DataStore {
             Map<String, Integer> own = new HashMap<>();
             for (Line l : old.lines()) own.merge(l.productId(), l.qty(), Integer::sum);
             checkStock(items, own);
-            double subtotal = round(items.stream().mapToDouble(i -> i.qty() * i.unitPrice()).sum());
+            // Tanks already returned against this receipt's customer must still be owed afterwards.
+            int oldOwed = old.lines().stream().filter(Line::owesTank).mapToInt(Line::qty).sum();
+            int newOwed = items.stream().filter(LineInput::owesTank).mapToInt(LineInput::qty).sum();
+            int stillOwed = owedCount(old.customerId()) - oldOwed + (old.customerId().equals(customerId) ? newOwed : 0);
+            if (stillOwed < 0) throw new Conflict(returnedMessage(old.customerId()));
+            double subtotal = round(items.stream().mapToDouble(LineInput::amount).sum());
             double later = payments().stream().filter(p -> p.receiptId().equals(id)).mapToDouble(Payment::amount).sum();
             checkMoney(subtotal, discount, paidAtSale, later);
             String[] row = {id, old.rawTime(), customerId, old.staff(), money(discount), money(paidAtSale), note};
@@ -387,6 +420,8 @@ final class DataStore {
         synchronized (lock) {
             Receipt r = receipt(id);
             if (r == null) return null;
+            int owed = r.lines().stream().filter(Line::owesTank).mapToInt(Line::qty).sum();
+            if (owedCount(r.customerId()) - owed < 0) throw new Conflict(returnedMessage(r.customerId()));
             lines.removeWhere(row -> receiptIdOf(row).equals(id));
             receipts.remove(id);
             payments.removeWhere(row -> col(row, 2).equals(id));
@@ -400,7 +435,7 @@ final class DataStore {
         for (LineInput i : items) {
             rows.add(new String[]{String.valueOf(next++), customerId, i.product().id(), time, String.valueOf(i.qty()),
                     money(i.unitPrice()), staff == null ? "" : staff, i.emptyProductId().isEmpty() ? "0" : "1",
-                    receiptId, i.emptyProductId(), i.remark()});
+                    receiptId, i.emptyProductId(), i.remark(), i.owesTank() ? "1" : "", i.swapFee() > 0 ? money(i.swapFee()) : ""});
         }
         lines.save(rows);
     }
@@ -466,6 +501,79 @@ final class DataStore {
         }
     }
 
+    // ---------------------------------------------------------------- tanks customers owe
+
+    List<TankReturn> tankReturns() {
+        synchronized (lock) {
+            List<TankReturn> out = new ArrayList<>();
+            for (String[] r : tankReturns.rows()) {
+                out.add(new TankReturn(col(r, 0), col(r, 1), parseTime(col(r, 1)), col(r, 2), col(r, 3),
+                        (int) Math.max(1, num(col(r, 4), 1)), col(r, 5), col(r, 6)));
+            }
+            return out;
+        }
+    }
+
+    /**
+     * Tanks still to be brought back, per customer, oldest first. Returns settle the oldest
+     * tanks first, whatever brand comes back (a customer may return another brand).
+     */
+    Map<String, List<OwedTank>> owedTanks() {
+        synchronized (lock) {
+            Map<String, List<OwedTank>> out = new LinkedHashMap<>();
+            for (Receipt r : receipts()) {
+                for (Line l : r.lines()) {
+                    if (l.owesTank()) out.computeIfAbsent(r.customerId(), k -> new ArrayList<>())
+                            .add(new OwedTank(r.customerId(), l.productId(), l.qty(), r.id(), r.rawTime(), r.time()));
+                }
+            }
+            Map<String, Integer> returned = new HashMap<>();
+            for (TankReturn t : tankReturns()) returned.merge(t.customerId(), t.qty(), Integer::sum);
+            Map<String, List<OwedTank>> left = new LinkedHashMap<>();
+            out.forEach((cid, list) -> {
+                int settle = returned.getOrDefault(cid, 0);
+                List<OwedTank> still = new ArrayList<>();
+                for (OwedTank o : list) {
+                    int take = Math.min(settle, o.qty());
+                    settle -= take;
+                    if (o.qty() > take) still.add(new OwedTank(cid, o.productId(), o.qty() - take, o.receiptId(), o.rawTime(), o.time()));
+                }
+                if (!still.isEmpty()) left.put(cid, still);
+            });
+            return left;
+        }
+    }
+
+    /** Tanks this customer still owes (taken without an empty, minus what they brought back). */
+    int owedCount(String customerId) {
+        synchronized (lock) {
+            int owed = 0;
+            for (Line l : lines()) if (l.owesTank() && l.customerId().equals(customerId)) owed += l.qty();
+            for (TankReturn t : tankReturns()) if (t.customerId().equals(customerId)) owed -= t.qty();
+            return owed;
+        }
+    }
+
+    private String returnedMessage(String customerId) {
+        Customer c = customer(customerId);
+        return (c == null ? "This customer" : c.name()) + " has already returned tanks for this. Change it another way, or count the stock instead.";
+    }
+
+    /** Records empty tanks a customer brought back; they go into the store as empties of that product. */
+    TankReturn returnTanks(Customer c, Product p, int qty, String staff, String remark) {
+        synchronized (lock) {
+            int owed = owedCount(c.id());
+            if (owed <= 0) throw new Conflict(c.name() + " doesn't owe any tanks.");
+            if (qty > owed) throw new Conflict(c.name() + " owes only " + owed + " tank" + (owed == 1 ? "" : "s") + ".");
+            List<String[]> rows = tankReturns.copy();
+            String id = nextId(rows);
+            String time = now();
+            rows.add(new String[]{id, time, c.id(), p.id(), String.valueOf(qty), staff, remark});
+            tankReturns.save(rows);
+            return new TankReturn(id, time, parseTime(time), c.id(), p.id(), qty, staff, remark);
+        }
+    }
+
     // ---------------------------------------------------------------- inventory
 
     List<Movement> movements() {
@@ -495,6 +603,7 @@ final class DataStore {
                 s.computeIfAbsent(l.productId(), k -> new int[4])[0] -= l.qty();
                 if (l.returnedEmpty()) s.computeIfAbsent(l.emptyProductId(), k -> new int[4])[1] += l.qty();
             }
+            for (TankReturn t : tankReturns()) s.computeIfAbsent(t.productId(), k -> new int[4])[1] += t.qty();
             Map<String, Stock> out = new HashMap<>();
             s.forEach((id, v) -> out.put(id, new Stock(v[0], v[1], v[2], v[3])));
             return out;
@@ -693,13 +802,82 @@ final class DataStore {
         }
     }
 
-    /** New tanks with load bought from a supplier, paid on the spot. */
-    Movement purchase(Product p, int qty, double unitCost, String staff, String note) {
+    /** New tanks with load bought from the brand's supplier; paidNow can be less than the bill (pay later). */
+    Movement purchase(Product p, int qty, double unitCost, double paidNow, String staff, String note) {
         synchronized (lock) {
-            Movement m = addMovement(p, "purchase", qty, 0, 0, 0, staff, note, null, unitCost);
+            double bill = round(qty * unitCost);
+            if (paidNow > bill + 0.005) throw new Conflict("That's more than the ₱" + money(bill) + " these tanks cost.");
             Supplier s = supplierFor(p.brand());
-            if (unitCost > 0) addSupplierPayment(s == null ? "" : s.id(), "", "purchase", round(qty * unitCost), staff, note);
+            if (s == null && paidNow < bill - 0.005) {
+                throw new Conflict("Add the supplier for " + p.brand() + " first, so the unpaid ₱" + money(round(bill - paidNow)) + " is owed to someone.");
+            }
+            Movement m = addMovement(p, "purchase", qty, 0, 0, 0, staff, note, null, unitCost);
+            if (paidNow > 0) addSupplierPayment(s == null ? "" : s.id(), "P" + m.id(), "purchase", round(paidNow), staff, note);
             return m;
+        }
+    }
+
+    /**
+     * Everything the store was billed for, oldest first, with what was paid: refill trips and
+     * new tanks bought. Purchases are billed to their brand's supplier. Purchase payments
+     * recorded before 3.0 (no bill key) settle that supplier's oldest purchases.
+     */
+    List<Bill> bills() {
+        synchronized (lock) {
+            Map<String, Product> prods = productMap();
+            List<SupplierPayment> pays = supplierPayments();
+            Map<String, Double> paidByKey = new HashMap<>();
+            Map<String, Double> loose = new HashMap<>(); // supplierId -> old purchase payments without a key
+            for (SupplierPayment sp : pays) {
+                if (!sp.refillId().isEmpty()) paidByKey.merge(sp.refillId(), sp.amount(), Double::sum);
+                else if ("purchase".equals(sp.kind())) loose.merge(sp.supplierId(), sp.amount(), Double::sum);
+            }
+            Map<String, Supplier> byBrand = new HashMap<>();
+            for (Supplier s : suppliers()) for (String b : s.brands()) byBrand.putIfAbsent(b.toLowerCase(Locale.ROOT), s);
+            Map<String, Double> tripCost = new HashMap<>();
+            List<Bill> out = new ArrayList<>();
+            for (Movement m : movements()) {
+                if ("refill-receive".equals(m.type())) tripCost.merge(m.refillId(), m.loaded() * m.unitCost(), Double::sum);
+                if ("purchase".equals(m.type()) && m.unitCost() > 0) {
+                    Product p = prods.get(m.productId());
+                    Supplier s = p == null ? null : byBrand.get(p.brand().toLowerCase(Locale.ROOT));
+                    String sid = s == null ? "" : s.id();
+                    double cost = round(m.loaded() * m.unitCost());
+                    double paid = paidByKey.getOrDefault("P" + m.id(), 0.0);
+                    double fromOld = Math.min(Math.max(0, cost - paid), loose.getOrDefault(sid, 0.0));
+                    loose.merge(sid, -fromOld, Double::sum);
+                    out.add(new Bill("P" + m.id(), sid, "purchase", m.loaded() + " new × " + (p == null ? "#" + m.productId() : p.label()),
+                            m.rawTime(), m.time(), cost, round(paid + fromOld)));
+                }
+            }
+            for (Refill rf : refills()) {
+                double cost = round(tripCost.getOrDefault(rf.id(), 0.0));
+                if (cost > 0 || paidByKey.containsKey(rf.id())) {
+                    out.add(new Bill(rf.id(), rf.supplierId(), "refill", "Refill trip #" + rf.id(), rf.rawTime(), rf.time(),
+                            cost, round(paidByKey.getOrDefault(rf.id(), 0.0))));
+                }
+            }
+            out.sort(Comparator.comparing((Bill b) -> b.time() == null ? LocalDateTime.MIN : b.time()));
+            return out;
+        }
+    }
+
+    /** Pays a supplier, settling their oldest unpaid bills first. */
+    List<SupplierPayment> paySupplier(Supplier s, double amount, String staff, String note) {
+        synchronized (lock) {
+            List<Bill> owing = bills().stream().filter(b -> b.supplierId().equals(s.id()) && b.owed() > 0).toList();
+            double owed = round(owing.stream().mapToDouble(Bill::owed).sum());
+            if (owed <= 0) throw new Conflict("Nothing is owed to " + s.name() + ".");
+            if (amount > owed + 0.005) throw new Conflict("That's more than the ₱" + money(owed) + " owed to " + s.name() + ".");
+            List<SupplierPayment> out = new ArrayList<>();
+            double left = round(amount);
+            for (Bill b : owing) {
+                if (left <= 0) break;
+                double part = round(Math.min(left, b.owed()));
+                out.add(addSupplierPayment(s.id(), b.key(), b.kind(), part, staff, note));
+                left = round(left - part);
+            }
+            return out;
         }
     }
 
@@ -728,7 +906,7 @@ final class DataStore {
     List<User> users() {
         synchronized (lock) {
             List<User> out = new ArrayList<>();
-            for (String[] r : users.rows()) out.add(new User(col(r, 0), col(r, 1), col(r, 2), col(r, 3)));
+            for (String[] r : users.rows()) out.add(new User(col(r, 0), col(r, 1), col(r, 2), col(r, 3), "1".equals(col(r, 4))));
             return out;
         }
     }
@@ -741,7 +919,7 @@ final class DataStore {
         synchronized (lock) {
             if (user(username) != null) return false;
             List<String[]> rows = users.copy();
-            rows.add(new String[]{username, salt, hash, now()});
+            rows.add(new String[]{username, salt, hash, now(), ""});
             users.save(rows);
             return true;
         }
@@ -750,7 +928,15 @@ final class DataStore {
     boolean setPassword(String username, String salt, String hash) {
         synchronized (lock) {
             User u = user(username);
-            return u != null && users.replace(username, new String[]{username, salt, hash, u.created()});
+            return u != null && users.replace(username, new String[]{username, salt, hash, u.created(), u.dashboard() ? "1" : ""});
+        }
+    }
+
+    /** Lets a staff member see (or stops them seeing) the summary dashboard in the POS. */
+    boolean setDashboard(String username, boolean on) {
+        synchronized (lock) {
+            User u = user(username);
+            return u != null && users.replace(username, new String[]{username, u.salt(), u.hash(), u.created(), on ? "1" : ""});
         }
     }
 

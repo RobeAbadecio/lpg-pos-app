@@ -4,6 +4,41 @@ Every update gets a new version number. It's shown in the POS (header, account m
 
 Numbering is `major.minor.patch`: **major** when the data or the way staff work changes a lot, **minor** for new features, **patch** for fixes and small changes.
 
+## 3.0.0 — 2026-10-01
+
+Built from the store's second round of feedback.
+
+**Selling**
+- No more "new tank" sales. When a customer brings no empty, choose **None**: they pay the normal price and owe the tank.
+- **Swap fee:** when the empty is another brand, the product's swap fee (set in Products) is added per tank. Staff can change it on the sale.
+- The empty must be the same size as the tank bought.
+- Picking a different customer starts an empty receipt.
+- The customer list shows each customer's last purchase and how many tanks they owe.
+
+**Tanks not returned**
+- A list of customers who still owe tanks, which tanks, and since when (Inventory, and both dashboards).
+- **Collect tank** records an empty brought back. Another brand is accepted, with a remark.
+
+**Suppliers**
+- Buying new tanks can be paid in part, with the rest owed to the brand's supplier.
+- Each supplier shows what's still owed (refill trips and new tanks), with a **Pay** button that settles the oldest bills first.
+
+**Dashboard for chosen staff**
+- On the admin dashboard, each staff account has a **Dashboard: on/off** switch.
+- Staff with it on get a Dashboard tab in the POS: sales and profit, tanks by size, tanks not returned, unpaid balances and supplier balances.
+
+**Stock by size**
+- Totals per tank size (with load, empty, at the refiller) and the kg of LPG in the tanks with load.
+
+**Easier to use**
+- Small buttons are bigger on phones.
+- Tab labels are the same on phones and computers, and the top bar fits tablets.
+
+**Data**
+- New file `TankReturns.csv`.
+- New columns: `owesTank` and `swapFee` on receipt items, `swapFee` on products, `dashboard` on staff accounts.
+- Older sales without an empty stay as new-tank sales and aren't counted as owed.
+
 ## 2.0.1 — 2026-10-01
 
 - Each supplier refills only its own brand. The supplier form takes one brand, picked from your products' brands, and each brand has one supplier.

@@ -4,24 +4,27 @@ A point-of-sale system for an LPG (cooking gas) retail store. Staff record sales
 
 It started as a Java Swing desktop app (`src/`). The web version in `web/` uses the same CSV data, so both read the same files.
 
-**Current version: 2.0.1.** See [CHANGELOG.md](CHANGELOG.md) for what changed in each version. The number is shown in the POS and on the dashboard.
+**Current version: 3.0.0.** See [CHANGELOG.md](CHANGELOG.md) for what changed in each version. The number is shown in the POS and on the dashboard.
 
 ## Features
 
 **Staff POS** (phone-friendly web app, sign-in required)
-- Receipts with several tanks. Each item has its own quantity and price, and records which empty came in: the same brand, another brand, or none (sold at the new-tank price). Items can carry a remark on the tank's condition.
+- Receipts with several tanks. Each item has its own quantity and price, and records which empty came in: the same tank, another brand of the same size (plus a swap fee), or none, in which case the customer owes the tank. Items can carry a remark on the tank's condition.
+- Tanks not returned: who owes tanks and since when; "Collect tank" records the empty when it comes back (another brand is accepted, with a remark).
 - Optional discount (₱ or %). Customers can pay in full, pay part now or pay later. Balances can be collected later.
 - Receipts can be searched, filtered to unpaid only, edited, voided and printed.
-- Customers (with their balances) and LPG products (refill price, new-tank price, refill cost, new-tank cost).
+- Customers (balances, tanks owed, last purchase) and LPG products (refill price, swap fee, refill cost, new-tank cost).
 - Inventory: tanks with load, empty tanks and tanks at the refiller, grouped by supplier. Each supplier refills only its own brand.
   - Refiller trips can come back in parts, with the refiller's bill, what was paid and what's still owed.
-  - Also: new-tank purchases, stock counts, write-offs and low-stock alerts. A sale can't take more than is in stock.
+  - Also: new-tank purchases (pay now or later), what each supplier is owed with a Pay button, totals per tank size with the kg of LPG, stock counts, write-offs and low-stock alerts. A sale can't take more than is in stock.
+- A Dashboard tab for staff the admin chooses: sales, profit, stock by size, tanks not returned and balances.
 
 **Admin dashboard** (only reachable on the host machine)
 - Revenue, receipts, cylinders sold, average sale, customers served, cash collected, money paid to suppliers and estimated gross profit, compared with the previous period
 - Revenue by day or hour, by product and by staff member; top customers
 - Stock levels by supplier, with sales per day and estimated days of stock left
-- Tanks at the refiller and what's owed to refillers; unpaid customer balances
+- Tanks at the refiller, what's owed to suppliers, unpaid customer balances and tanks not returned
+- Which staff may see the Dashboard tab in the POS
 - Who's signed in right now (and from where), with the option to sign people out
 - Staff accounts, the activity log, and the public-link switch
 
@@ -78,15 +81,16 @@ This generates about 4 months of made-up sales, customers, staff and stock. It n
 | File | Columns |
 |---|---|
 | `Customers.csv` | id, firstName, lastName, contactNo, address |
-| `LPGs.csv` | id, brand, price, weight[, reorderLevel, tankPrice, refillCost, tankCost] |
-| `Transactions.csv` | id, customerId, lpgId, dateTime[, qty, unitPrice, staff, returnedEmpty, receiptId, emptyLpgId, remark] (one row per receipt item) |
+| `LPGs.csv` | id, brand, price, weight[, reorderLevel, tankPrice (unused), refillCost, tankCost, swapFee] |
+| `Transactions.csv` | id, customerId, lpgId, dateTime[, qty, unitPrice, staff, returnedEmpty, receiptId, emptyLpgId, remark, owesTank, swapFee] (one row per receipt item) |
 | `Receipts.csv` | id, dateTime, customerId, staff, discount, paidAtSale, note |
 | `Payments.csv` | id, dateTime, receiptId, customerId, amount, staff, note |
 | `StockMovements.csv` | id, dateTime, lpgId, type, loadedDelta, emptyDelta, staff, note[, damagedDelta, refillerDelta, refillId, unitCost] |
 | `Suppliers.csv` | id, name, contact, brand (one per supplier), note |
 | `Refills.csv` | id, dateTime, supplierId, staff, note (one row per trip to the refiller) |
-| `SupplierPayments.csv` | id, dateTime, supplierId, refillId, kind, amount, staff, note |
-| `WebUsers.csv` | username, salt, hash, created |
+| `SupplierPayments.csv` | id, dateTime, supplierId, refillId (trip id, or "P" + purchase movement id), kind, amount, staff, note |
+| `TankReturns.csv` | id, dateTime, customerId, lpgId, qty, staff, remark (empties brought back by customers who owed them) |
+| `WebUsers.csv` | username, salt, hash, created[, dashboard] |
 
 The columns in brackets and the files after `Transactions.csv` are web-only. The desktop app ignores them. The CSV files in this repo's root are the original desktop app's sample data.
 
@@ -97,6 +101,7 @@ src/               original Swing desktop app
 web/src/           Java web server (POS + admin APIs, storage, auth, stats, tunnel)
 web/public/app/    staff POS front end
 web/public/admin/  admin dashboard
+web/public/shared/ shared styles, charts, UI helpers and the version number
 web/demo/          fake-data demo
 CHANGELOG.md       what changed in each version
 ```

@@ -46,7 +46,7 @@
   .tabs, .uname { display: none; }
   .content { padding: 14px 12px 96px; }
   .bottomnav {
-    display: grid; grid-template-columns: repeat(5, 1fr);
+    display: grid; grid-auto-flow: column; grid-auto-columns: 1fr;
     position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
     padding: 6px 6px max(6px, env(safe-area-inset-bottom));
     background: color-mix(in srgb, var(--surface) 92%, transparent);
@@ -115,7 +115,7 @@
   .input.search, .head-actions { width: 100%; }
   .head-actions .input.search { flex: 1; width: auto; }
 }
-.row-actions { display: inline-flex; gap: 4px; }
+.row-actions { display: inline-flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
 .more-row { display: flex; justify-content: center; padding: 14px 0 2px; }
 .rtable .sm-detail { display: none; }
 @media (max-width: 760px) {
@@ -197,7 +197,7 @@
   display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
   margin-bottom: 16px; padding: 12px 16px; border-radius: var(--radius); background: var(--accent-wash); border: 1px solid var(--accent);
 }
-.owes { margin-left: 8px; font-size: 12px; font-weight: 600; color: var(--warning-ink); }
+.owes { margin-left: 8px; font-size: 12px; font-weight: 600; color: var(--warning-ink); white-space: nowrap; display: inline-block; }
 .owes-text { color: var(--warning-ink); font-weight: 600; }
 .mini-row .right { text-align: right; }
 .rtable.clickable tbody tr { cursor: pointer; }
@@ -274,3 +274,23 @@ dialog.modal .row-end { flex-wrap: wrap; }
 .version-tag { font-size: 12px; font-weight: 500; }
 .version-line { font-size: 12px; }
 @media (max-width: 760px) { .version-tag { display: none; } }
+
+/* 3.0: swaps, tanks owed, dashboard */
+.swap-row { font-size: 13px; }
+.swap-row .input { width: 96px; min-height: 34px; padding: 4px 8px; }
+.owe-note { font-size: 13px; color: var(--warning-ink); }
+.minor-head { font-size: 13px; font-weight: 600; color: var(--ink-2); margin: 16px 0 6px; padding-top: 14px; border-top: 1px solid var(--grid); }
+.dash-two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 860px) { .dash-two { grid-template-columns: 1fr; } }
+#dash-body { transition: opacity .15s; }
+#dash-body.loading { opacity: .55; }
+#view-dashboard .revenue .label { margin-bottom: 0; }
+/* Six tabs on tablets and small laptops: keep labels on one line */
+.brand, .tab { white-space: nowrap; }
+@media (max-width: 1080px) {
+  .version-tag { display: none; }
+  .tabs { margin-left: 4px; gap: 2px; min-width: 0; overflow-x: auto; scrollbar-width: none; }
+  .tabs::-webkit-scrollbar { display: none; }
+  .brand { flex-shrink: 0; }
+  .tabs .tab { padding-left: 9px; padding-right: 9px; }
+}
