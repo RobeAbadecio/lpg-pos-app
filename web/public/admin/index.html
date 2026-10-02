@@ -45,6 +45,10 @@
     <div class="layout">
       <!-- Sales analytics -->
       <div class="main">
+        <section class="card">
+          <div class="card-head"><div><h2>Daily summary</h2><div class="sub">One day at a time: sales, money in and out, and tanks. Go back to earlier days with ‹ or the list.</div></div></div>
+          <div id="daily" class="daily"></div>
+        </section>
         <div class="filters" role="group" aria-label="Date range">
           <button class="chip" data-range="today">Today</button>
           <button class="chip" data-range="7">7 days</button>
@@ -75,7 +79,7 @@
             <div class="card tile"><div class="label">Average sale</div><div class="value" id="kpi-avg">—</div><div class="delta" id="kpi-avg-delta"></div></div>
             <div class="card tile"><div class="label">Customers served</div><div class="value" id="kpi-customers">—</div><div class="delta" id="kpi-customers-delta"></div></div>
             <div class="card tile"><div class="label">Cash collected</div><div class="value" id="kpi-collected">—</div><div class="delta" id="kpi-collected-delta"></div></div>
-            <div class="card tile"><div class="label">Paid to suppliers</div><div class="value" id="kpi-supplier">—</div><div class="delta" id="kpi-supplier-delta"></div></div>
+            <div class="card tile"><div class="label">Paid to suppliers</div><div class="value" id="kpi-supplier">—</div><div class="delta" id="kpi-supplier-delta"></div><div class="tile-note" id="kpi-supplier-note"></div></div>
             <div class="card tile"><div class="label">Gross profit (est.)</div><div class="value" id="kpi-profit">—</div><div class="delta" id="kpi-profit-delta"></div><div class="tile-note" id="kpi-profit-note"></div></div>
           </section>
 
@@ -122,6 +126,11 @@
         </section>
 
         <section class="card">
+          <div class="card-head"><div><h2>Staff money</h2><div class="sub" id="staff-money-sub"></div></div></div>
+          <div id="staff-money"></div>
+        </section>
+
+        <section class="card">
           <div class="card-head"><div><h2>Tanks not returned</h2><div class="sub" id="tanks-out-sub"></div></div></div>
           <div id="tanks-out"></div>
         </section>
@@ -163,6 +172,7 @@
   <script src="/shared/version.js"></script>
   <script src="/shared/ui.js"></script>
   <script src="/shared/charts.js"></script>
+  <script src="/shared/daily.js"></script>
   <script src="/admin.js"></script>
 </body>
 </html>

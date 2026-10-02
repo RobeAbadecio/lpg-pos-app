@@ -280,8 +280,6 @@ dialog.modal .row-end { flex-wrap: wrap; }
 .swap-row .input { width: 96px; min-height: 34px; padding: 4px 8px; }
 .owe-note { font-size: 13px; color: var(--warning-ink); }
 .minor-head { font-size: 13px; font-weight: 600; color: var(--ink-2); margin: 16px 0 6px; padding-top: 14px; border-top: 1px solid var(--grid); }
-.dash-two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-@media (max-width: 860px) { .dash-two { grid-template-columns: 1fr; } }
 #dash-body { transition: opacity .15s; }
 #dash-body.loading { opacity: .55; }
 #view-dashboard .revenue .label { margin-bottom: 0; }
@@ -294,3 +292,9 @@ dialog.modal .row-end { flex-wrap: wrap; }
   .brand { flex-shrink: 0; }
   .tabs .tab { padding-left: 9px; padding-right: 9px; }
 }
+
+/* 3.1: where supplier money came from; dashboard view switch */
+.pay-source { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px 4px; margin: 0; display: grid; gap: 8px; min-width: 0; }
+.pay-source legend { padding: 0 4px; font-size: 13px; font-weight: 600; color: var(--ink-2); }
+.pay-source .cost-line { margin: 0 0 6px; }
+.dash-switch { max-width: 360px; }

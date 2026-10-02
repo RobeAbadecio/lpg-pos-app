@@ -3,12 +3,14 @@
   const { h, clear, peso, count, toast, request, formDialog, confirmDialog, openDialog, fmtTime } = UI;
   const $ = (id) => document.getElementById(id);
 
-  const EMPTY_DATA = { customers: [], products: [], receipts: [], movements: [], suppliers: [], refills: [], brands: [], returns: [], me: null };
+  const EMPTY_DATA = { customers: [], products: [], receipts: [], movements: [], suppliers: [], refills: [], brands: [], returns: [], me: null,
+    staff: [], staffMoney: { total: 0, owed: [], recent: [] } };
   // own: tanks the receipt being edited already holds, so they count as available again.
   // laterPaid: payments recorded after the sale on the receipt being edited.
   // lastCustomerId: who the items were added for, so switching customers starts a fresh receipt.
   const newSale = () => ({ customerId: null, lastCustomerId: null, lines: [], discount: '', pay: 'full', paidNow: '', cash: '', note: '', editing: null, own: {}, laterPaid: 0 });
-  const state = { me: null, data: EMPTY_DATA, etag: null, view: 'sell', sale: newSale(), historyFilter: 'all', summary: null, summaryRange: '7', summaryAt: 0 };
+  const state = { me: null, data: EMPTY_DATA, etag: null, view: 'sell', sale: newSale(), historyFilter: 'all', summary: null, summaryRange: '7', summaryAt: 0, dashMode: 'daily' };
+  try { state.dashMode = localStorage.getItem('lpg-dash-mode') === 'trends' ? 'trends' : 'daily'; } catch (_) { /* storage blocked */ }
   let lineKey = 0;
 
   // ------------------------------------------------------------------ API
@@ -182,7 +184,6 @@
   const itemsText = (r) => r.lines.map((l) => `${l.qty} × ${l.product}${l.owesTank ? ' (no empty)' : ''}`).join(', ');
   const lastText = (c) => c.lastPurchase ? `Last bought ${fmtTime(c.lastPurchase)}` : 'No purchases yet';
   const tanksBadge = (c) => c.tanksOwed > 0 ? h('span', { class: 'owes' }, `Owes ${plural(c.tanksOwed, 'tank')}`) : null;
-  const kgOf = (n) => `${count.format(round2(n))} kg`;
   // "3 × Petron Gasul 11.0 kg, 1 × Solane 11.0 kg": a customer's owed tanks added up per product.
   const tanksText = (c) => {
     const by = new Map();
@@ -873,19 +874,18 @@
         h('p', {}, attention.map((p) => `${p.label}: ${p.loaded <= 0 ? 'none with load' : p.loaded + ' with load'}${p.empty ? `, ${p.empty} empty to send` : ''}`).join(' · ')))) : null);
 
     const sum = (k) => products.reduce((n, p) => n + Math.max(0, p[k]), 0);
-    const kgLoaded = products.reduce((n, p) => n + Math.max(0, p.loaded) * p.weight, 0);
-    $('inventory-summary').textContent = `${count.format(sum('loaded'))} with load · ${count.format(sum('empty'))} empty · ${count.format(sum('atRefiller'))} at refiller · ${kgOf(kgLoaded)} of LPG`;
+    $('inventory-summary').textContent = `${count.format(sum('loaded'))} with load · ${count.format(sum('empty'))} empty · ${count.format(sum('atRefiller'))} at refiller · ${count.format(sum('loaded') + sum('empty') + sum('atRefiller'))} tanks in all`;
     // Totals per tank size (kg), across brands.
     const sizes = [];
     for (const p of [...products].sort((a, b) => a.weight - b.weight)) {
       let s = sizes.find((x) => x.weight === p.weight);
-      if (!s) sizes.push(s = { weight: p.weight, loaded: 0, empty: 0, atRefiller: 0, kgLoaded: 0 });
+      if (!s) sizes.push(s = { weight: p.weight, loaded: 0, empty: 0, atRefiller: 0 });
       s.loaded += Math.max(0, p.loaded);
       s.empty += Math.max(0, p.empty);
       s.atRefiller += Math.max(0, p.atRefiller);
-      s.kgLoaded = round2(s.loaded * s.weight);
     }
-    Charts.sizeTable($('size-totals'), sizes, round2(kgLoaded));
+    Charts.sizeTable($('size-totals'), sizes);
+    renderStaffMoney();
 
     const out = state.data.customers.filter((c) => c.tanksOwed > 0).sort((a, b) => b.tanksOwed - a.tanksOwed);
     $('tanks-out-sub').textContent = out.length ? `${plural(out.reduce((n, c) => n + c.tanksOwed, 0), 'tank')} with ${plural(out.length, 'customer')}` : 'Customers who took a tank without an empty';
@@ -934,7 +934,7 @@
           h('div', {}, h('strong', {}, `Trip #${r.id} · ${r.supplier}`)),
           h('div', { class: 'meta' }, `Sent ${fmtTime(r.time)} by ${r.staff}${r.note ? ' · ' + r.note : ''}${back ? ` · ${back} back so far` : ''}`),
           waiting.length ? h('div', { class: 'meta' }, 'Waiting: ' + waiting.map((i) => `${i.outstanding} × ${i.product}`).join(', ')) : h('div', { class: 'meta' }, 'All tanks back'),
-          r.cost ? h('div', { class: 'meta' }, `Bill ${peso.format(r.cost)} · paid ${peso.format(r.paid)}`,
+          r.cost ? h('div', { class: 'meta' }, `Bill ${peso.format(r.cost)} · paid ${peso.format(r.paid)}${r.paidStaff ? ` (${peso.format(r.paidStaff)} staff money)` : ''}`,
             r.owed > 0 ? h('span', { class: 'owes-text' }, ` · ${peso.format(r.owed)} still to pay`) : null) : null),
         actions(
           r.owed > 0 ? h('button', { class: 'btn small', onclick: () => payRefillerDialog(r) }, 'Pay refiller') : null,
@@ -1022,28 +1022,24 @@
             h('label', {}, h('small', { class: 'm-only' }, 'Cost each (₱)'),
               h('input', { class: 'input num', type: 'number', name: 'cost.' + i, min: 0, step: '0.01', value: p && p.refillCost ? p.refillCost.toFixed(2) : '', placeholder: '0.00', inputmode: 'decimal', 'aria-label': `Refill cost per ${it.product}` })));
         }));
-      paidEdited = false;
+      if (pay) pay.reset();
       updateCost();
     };
     // The bill follows the rows: tanks back with load × cost each. Unfilled tanks aren't charged.
     const costLine = h('div', { class: 'cost-line' });
-    const paid = h('input', { class: 'input num', name: 'paid', type: 'number', min: 0, step: '0.01', inputmode: 'decimal' });
-    let paidEdited = false;
-    paid.addEventListener('input', () => { paidEdited = true; updateCost(); });
+    let cost = 0;
+    const tripOwed = () => (open.find((x) => x.id === sel.value) || {}).owed || 0;
     function updateCost() {
-      let cost = 0;
+      cost = 0;
       rowsBox.querySelectorAll('.qty-row.four:not(.head)').forEach((row) => {
         cost += (Number(row.querySelector('[name^="received."]').value) || 0) * (Number(row.querySelector('[name^="cost."]').value) || 0);
       });
-      const trip = open.find((x) => x.id === sel.value);
-      const due = round2(cost + (trip ? trip.owed : 0));
-      if (!paidEdited) paid.value = due.toFixed(2);
-      const left = round2(due - (Number(paid.value) || 0));
       clear(costLine, h('span', {}, 'Refill bill'), h('strong', { class: 'num' }, peso.format(cost)),
-        trip && trip.owed ? h('small', { class: 'muted' }, ` + ${peso.format(trip.owed)} still owed on this trip`) : null,
-        left > 0 ? h('small', { class: 'owes-text' }, ` · ${peso.format(left)} left to pay later`) : null,
-        left < 0 ? h('small', { class: 'error-text' }, `Paid is ${peso.format(-left)} more than the bill`) : null);
+        tripOwed() ? h('small', { class: 'muted' }, ` + ${peso.format(tripOwed())} still owed on this trip`) : null);
+      if (pay) pay.refresh();
     }
+    let pay = null;
+    pay = paySource({}, () => round2(cost + tripOwed()));
     rowsBox.addEventListener('input', updateCost);
     sel.addEventListener('change', draw);
     draw();
@@ -1052,8 +1048,7 @@
       message: 'Tanks back with load go on sale. Tanks returned unfilled come back as empties (not charged); say why in the note. Anything not entered stays “at refiller”.',
       submit: 'Receive tanks',
       wide: true,
-      body: [h('label', { class: 'field' }, h('span', {}, 'Trip'), sel), rowsBox, costLine,
-        h('label', { class: 'field inline' }, h('span', {}, 'Paid to refiller (₱)'), paid),
+      body: [h('label', { class: 'field' }, h('span', {}, 'Trip'), sel), rowsBox, costLine, pay.el,
         h('label', { class: 'field' }, h('span', {}, 'Note (optional)'), h('input', { class: 'input', name: 'note', maxlength: 120, placeholder: 'e.g. delivery receipt no.' }))],
       onSubmit: (form) => {
         const body = formBody(form);
@@ -1068,12 +1063,53 @@
       title: `Pay ${r.supplier}`,
       message: `Trip #${r.id}: bill ${peso.format(r.cost)}, paid ${peso.format(r.paid)}, ${peso.format(r.owed)} still to pay.`,
       submit: 'Record payment',
-      fields: [
-        { name: 'amount', label: 'Amount paid (₱)', type: 'number', min: '0.01', step: '0.01', value: r.owed.toFixed(2), required: true, inputmode: 'decimal', full: true },
-        { name: 'note', label: 'Note (optional)', full: true, placeholder: 'e.g. cash, bank transfer ref.' },
-      ],
-      onSubmit: (v) => mutate('POST', `/api/refills/${encodeURIComponent(r.id)}/pay`, v, `Paid ${peso.format(Number(v.amount))} to ${r.supplier}`),
+      extra: (inputs) => [paySource(inputs, r.owed).el, noteField(inputs, 'e.g. cash, bank transfer ref.')],
+      onSubmit: (v) => mutate('POST', `/api/refills/${encodeURIComponent(r.id)}/pay`, v, `Paid ${peso.format(paidTotal(v))} to ${r.supplier}`),
     });
+  }
+
+  const paidTotal = (v) => round2((Number(v.paidSales) || 0) + (Number(v.paidStaff) || 0));
+  const noteField = (inputs, placeholder) => {
+    inputs.note = h('input', { class: 'input', name: 'note', maxlength: 120, placeholder });
+    return h('label', { class: 'field' }, h('span', {}, 'Note (optional)'), inputs.note);
+  };
+
+  // Where the money paid to a supplier came from: the day's sales, and/or a staff member's own
+  // pocket (the store owes it back to them). "From sales" follows what's due until it's typed in.
+  // Adds paidSales / paidStaff / paidBy to the dialog's inputs (and form, by name).
+  function paySource(inputs, due) {
+    const owedNow = () => round2(typeof due === 'function' ? due() : due);
+    const num = (el) => Number(el.value) || 0;
+    const sales = h('input', { class: 'input num', name: 'paidSales', type: 'number', min: 0, step: '0.01', inputmode: 'decimal' });
+    const staff = h('input', { class: 'input num', name: 'paidStaff', type: 'number', min: 0, step: '0.01', inputmode: 'decimal', placeholder: '0.00' });
+    const who = h('select', { class: 'input', name: 'paidBy' }, (state.data.staff.length ? state.data.staff : [state.me.username]).map((u) => h('option', { value: u }, u)));
+    who.value = state.me.username;
+    const whoField = h('label', { class: 'field' }, h('span', {}, 'Whose money'), who);
+    const line = h('p', { class: 'cost-line' });
+    let edited = false;
+    const refresh = () => {
+      const d = owedNow();
+      if (!edited) sales.value = Math.max(0, round2(d - num(staff))).toFixed(2);
+      whoField.hidden = !(num(staff) > 0);
+      const total = round2(num(sales) + num(staff));
+      const left = round2(d - total);
+      clear(line, h('span', {}, 'Total paid'), h('strong', { class: 'num' }, peso.format(total)),
+        left > 0 ? h('small', { class: 'owes-text' }, ` · ${peso.format(left)} left to pay later`) : null,
+        left < 0 ? h('small', { class: 'error-text' }, ` · ${peso.format(-left)} more than what’s owed`) : null,
+        num(staff) > 0 ? h('small', { class: 'muted' }, ` · the store owes ${who.value} ${peso.format(num(staff))}`) : null);
+    };
+    sales.addEventListener('input', () => { edited = true; refresh(); });
+    staff.addEventListener('input', refresh);
+    who.addEventListener('change', refresh);
+    Object.assign(inputs, { paidSales: sales, paidStaff: staff, paidBy: who });
+    const el = h('fieldset', { class: 'pay-source' },
+      h('legend', {}, 'Paid now'),
+      h('div', { class: 'grid-2' },
+        h('label', { class: 'field' }, h('span', {}, 'From sales (₱)'), sales),
+        h('label', { class: 'field' }, h('span', {}, 'Staff’s own money (₱)'), staff)),
+      whoField, line);
+    refresh();
+    return { el, refresh, reset: () => { edited = false; refresh(); } };
   }
 
   function purchaseDialog(p) {
@@ -1086,32 +1122,27 @@
         { name: 'productId', label: 'LPG product', type: 'select', full: true, value: (p || state.data.products[0]).id, options: productOptions((x) => `${x.label} (${x.loaded} with load)`) },
         { name: 'qty', label: 'Tanks bought', type: 'number', min: 1, step: 1, required: true, inputmode: 'numeric' },
         { name: 'unitCost', label: 'Cost per tank (₱)', type: 'number', min: 0, step: '0.01', inputmode: 'decimal', value: (p || state.data.products[0]).tankCost || '' },
-        { name: 'paid', label: 'Paid to supplier now (₱)', type: 'number', min: 0, step: '0.01', inputmode: 'decimal', full: true },
-        { name: 'note', label: 'Note (optional)', full: true, placeholder: 'e.g. supplier, receipt no.' },
       ],
-      // Picking another product fills in its usual new-tank cost; "paid" follows the bill until typed in.
+      // Picking another product fills in its usual new-tank cost; what's paid follows the bill until typed in.
       extra: (inputs) => {
-        let paidEdited = false;
-        inputs.paid.addEventListener('input', () => { paidEdited = true; show(); });
+        const bill = () => round2((Number(inputs.qty.value) || 0) * (Number(inputs.unitCost.value) || 0));
+        const total = h('p', { class: 'cost-line' });
+        const pay = paySource(inputs, bill);
+        const show = () => {
+          const x = byId(state.data.products, inputs.productId.value);
+          clear(total, h('span', {}, 'Bill'), h('strong', { class: 'num' }, peso.format(bill())),
+            x && x.supplier ? h('small', { class: 'muted' }, ` · owed to ${x.supplier} until paid`) : null);
+          pay.refresh();
+        };
         inputs.productId.addEventListener('change', () => {
           const x = byId(state.data.products, inputs.productId.value);
           if (x) inputs.unitCost.value = x.tankCost || '';
+          show();
         });
-        const total = h('p', { class: 'cost-line' });
-        const show = () => {
-          const t = round2((Number(inputs.qty.value) || 0) * (Number(inputs.unitCost.value) || 0));
-          if (!paidEdited) inputs.paid.value = t ? t.toFixed(2) : '';
-          const left = round2(t - (Number(inputs.paid.value) || 0));
-          const x = byId(state.data.products, inputs.productId.value);
-          clear(total, h('span', {}, 'Bill'), h('strong', { class: 'num' }, peso.format(t)),
-            left > 0 ? h('small', { class: 'owes-text' }, ` · ${peso.format(left)} to pay later${x && x.supplier ? ` (owed to ${x.supplier})` : ''}`) : null,
-            left < 0 ? h('small', { class: 'error-text' }, ` Paid is ${peso.format(-left)} more than the bill`) : null);
-        };
         inputs.qty.addEventListener('input', show);
         inputs.unitCost.addEventListener('input', show);
-        inputs.productId.addEventListener('change', show);
         show();
-        return total;
+        return [total, pay.el, noteField(inputs, 'e.g. supplier, receipt no.')];
       },
       onSubmit: (v) => mutate('POST', '/api/stock/purchase', v, `Added ${v.qty} new tanks`),
     });
@@ -1123,11 +1154,37 @@
       title: `Pay ${s.name}`,
       message: `Owed ${peso.format(s.owed)}: ` + s.bills.map((b) => `${b.label} (${fmtTime(b.time)}) ${peso.format(b.owed)}`).join('; ') + '. Oldest bills are paid first.',
       submit: 'Record payment',
+      extra: (inputs) => [paySource(inputs, s.owed).el, noteField(inputs, 'e.g. cash, bank transfer ref.')],
+      onSubmit: (v) => mutate('POST', `/api/suppliers/${encodeURIComponent(s.id)}/pay`, v, `Paid ${peso.format(paidTotal(v))} to ${s.name}`),
+    });
+  }
+
+  // Staff who paid suppliers from their own pocket, and paying them back.
+  function renderStaffMoney() {
+    const m = state.data.staffMoney;
+    $('staff-money-sub').textContent = m.total > 0 ? `The store owes staff ${peso.format(m.total)}` : 'Nobody is owed anything';
+    const what = (e) => e.kind === 'advance' ? `${e.staff} paid ${e.supplier} (${e.bill})` : `Paid back to ${e.staff}`;
+    clear($('staff-money'),
+      m.owed.length ? h('div', { class: 'list' }, m.owed.map((o) => h('div', { class: 'supplier-row' },
+        h('div', {}, h('strong', {}, o.staff), h('div', { class: 'meta owes-text' }, `Owed ${peso.format(o.owed)}`)),
+        actions(h('button', { class: 'btn small', onclick: () => payBackDialog(o) }, 'Pay back'))))) : h('div', { class: 'empty' }, 'When staff pay a supplier with their own money, it shows here until they’re paid back.'),
+      m.recent.length ? h('h3', { class: 'minor-head' }, 'Recent') : null,
+      m.recent.length ? h('div', { class: 'moves' }, m.recent.slice(0, 8).map((e) => h('div', { class: 'move' },
+        h('div', {}, h('strong', {}, what(e))),
+        h('div', { class: 'num ' + (e.kind === 'advance' ? 'owes-text' : 'secondary') }, (e.kind === 'advance' ? '+' : '−') + peso.format(e.amount)),
+        h('div', { class: 'meta' }, [fmtTime(e.time), e.by, e.note].filter(Boolean).join(' · '))))) : null);
+  }
+
+  function payBackDialog(o) {
+    formDialog({
+      title: `Pay back ${o.staff}`,
+      message: `${o.staff} paid ${peso.format(o.owed)} to suppliers from their own money. Record what the store gives back now (from sales).`,
+      submit: 'Record payback',
       fields: [
-        { name: 'amount', label: 'Amount paid (₱)', type: 'number', min: '0.01', step: '0.01', value: s.owed.toFixed(2), required: true, inputmode: 'decimal', full: true },
-        { name: 'note', label: 'Note (optional)', full: true, placeholder: 'e.g. cash, bank transfer ref.' },
+        { name: 'amount', label: 'Amount paid back (₱)', type: 'number', min: '0.01', step: '0.01', value: o.owed.toFixed(2), required: true, inputmode: 'decimal', full: true },
+        { name: 'note', label: 'Note (optional)', full: true, placeholder: 'e.g. cash from the drawer' },
       ],
-      onSubmit: (v) => mutate('POST', `/api/suppliers/${encodeURIComponent(s.id)}/pay`, v, `Paid ${peso.format(Number(v.amount))} to ${s.name}`),
+      onSubmit: (v) => mutate('POST', `/api/staff/${encodeURIComponent(o.staff)}/payback`, v, `Paid back ${peso.format(Number(v.amount))} to ${o.staff}`),
     });
   }
 
@@ -1195,8 +1252,30 @@
   for (const chip of document.querySelectorAll('#view-dashboard [data-range]')) {
     chip.addEventListener('click', () => { state.summaryRange = chip.dataset.range; state.summaryAt = 0; renderDashboard(); });
   }
+  for (const b of document.querySelectorAll('[data-dash]')) {
+    b.addEventListener('click', () => {
+      state.dashMode = b.dataset.dash;
+      try { localStorage.setItem('lpg-dash-mode', state.dashMode); } catch (_) { /* storage blocked */ }
+      state.summaryAt = 0;
+      renderDashboard();
+    });
+  }
 
-  async function renderDashboard() {
+  // Two views: one day at a time (with the days before), or trends over a range.
+  let daily = null;
+  async function renderDashboard(passive) {
+    for (const b of document.querySelectorAll('[data-dash]')) b.setAttribute('aria-checked', String(b.dataset.dash === state.dashMode));
+    $('dash-daily').hidden = state.dashMode !== 'daily';
+    $('dash-trends').hidden = state.dashMode !== 'trends';
+    if (state.dashMode === 'daily') {
+      if (!daily) daily = Daily.mount($('dash-daily'), (date) => api('GET', '/api/daily?date=' + encodeURIComponent(date)));
+      else if (passive || Date.now() - state.summaryAt > 3000) { state.summaryAt = Date.now(); daily.refresh(); }
+      return;
+    }
+    await renderTrends();
+  }
+
+  async function renderTrends() {
     for (const c of document.querySelectorAll('#view-dashboard [data-range]')) c.setAttribute('aria-pressed', String(c.dataset.range === state.summaryRange));
     if (Date.now() - state.summaryAt > 3000) {
       state.summaryAt = Date.now();
@@ -1227,12 +1306,17 @@
     tile('d-qty', count.format(t.qty), t.qty, p && p.qty);
     tile('d-collected', UI.pesoRound.format(t.collected), t.collected, p && p.collected);
     tile('d-supplier', UI.pesoRound.format(t.supplierPaid), t.supplierPaid, p && p.supplierPaid, true);
+    $('d-supplier-note').textContent = t.supplierPaidStaff ? `${peso.format(t.supplierPaidSales)} from sales · ${peso.format(t.supplierPaidStaff)} staff money` : t.supplierPaid ? 'All from sales' : '';
     tile('d-profit', t.profit == null ? '—' : UI.pesoRound.format(t.profit), t.profit, p && p.profit);
     $('d-profit-note').textContent = t.profit == null ? 'Set refill costs in Products to see profit'
       : s.uncosted.length ? `Leaves out ${s.uncosted.join(', ')} (no refill cost)` : `${t.costedRevenue ? Math.round(t.profit / t.costedRevenue * 100) : 0}% of sales`;
     Charts.hbars($('d-products'), s.byProduct, (r) => `${count.format(r.qty)} tank${r.qty === 1 ? '' : 's'}`, 'No sales in this period.');
-    $('d-size-sub').textContent = `${count.format(inv.kgLoaded)} kg of LPG with load`;
-    Charts.sizeTable($('d-sizes'), inv.bySize, inv.kgLoaded);
+    $('d-size-sub').textContent = `${count.format(inv.totalTanks)} tanks in all`;
+    Charts.sizeTable($('d-sizes'), inv.bySize);
+    const sm = d.staffMoney;
+    $('d-staff-sub').textContent = sm.total > 0 ? `${peso.format(sm.total)} to pay back` : 'Nobody is owed anything';
+    clear($('d-staff'), sm.owed.length ? sm.owed.map((o) => h('div', { class: 'owe-row' }, h('span', {}, o.staff), h('strong', { class: 'num' }, peso.format(o.owed))))
+      : h('div', { class: 'empty' }, 'No staff money to pay back.'));
 
     const owedRow = (name, meta, figure) => h('div', { class: 'owe-row' }, h('div', {}, h('div', {}, name), meta ? h('div', { class: 'meta' }, meta) : null), h('strong', { class: 'num' }, figure));
     const to = d.tanksOut;
@@ -1253,7 +1337,7 @@
   let dashResize;
   new ResizeObserver(() => { clearTimeout(dashResize); dashResize = setTimeout(drawDashboard, 80); }).observe($('d-trend'));
   setInterval(() => {
-    if (state.view === 'dashboard' && document.visibilityState === 'visible') { state.summaryAt = 0; renderDashboard(); }
+    if (state.view === 'dashboard' && document.visibilityState === 'visible') { state.summaryAt = 0; renderDashboard(true); }
   }, 30000);
 
   // ------------------------------------------------------------------ boot

@@ -1,6 +1,7 @@
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.YearMonth;
+import java.time.format.DateTimeParseException;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.function.Function;
@@ -93,6 +94,7 @@ final class Stats {
         double collected = 0, prevCollected = 0, discounts = 0, prevDiscounts = 0;
         // Profit only counts lines whose product has a refill cost; the rest are listed in uncosted.
         double cost = 0, prevCost = 0, costedRevenue = 0, prevCostedRevenue = 0, supplierPaid = 0, prevSupplierPaid = 0;
+        double paidByStaff = 0, prevPaidByStaff = 0, paidBack = 0, prevPaidBack = 0;
         boolean anyCosted = false, prevAnyCosted = false;
         Set<String> uncosted = new TreeSet<>(); // products sold in range with no refill cost set
         Map<String, Agg> byStaff = new HashMap<>(), byCustomer = new HashMap<>();
@@ -146,8 +148,17 @@ final class Stats {
             }
         }
         for (DataStore.SupplierPayment sp : store.supplierPayments()) {
-            if (inRange.test(sp.time())) supplierPaid += sp.amount();
-            else if (inPrev.test(sp.time())) prevSupplierPaid += sp.amount();
+            if (inRange.test(sp.time())) {
+                supplierPaid += sp.amount();
+                if (sp.fromStaff()) paidByStaff += sp.amount();
+            } else if (inPrev.test(sp.time())) {
+                prevSupplierPaid += sp.amount();
+                if (sp.fromStaff()) prevPaidByStaff += sp.amount();
+            }
+        }
+        for (DataStore.Payback pb : store.paybacks()) {
+            if (inRange.test(pb.time())) paidBack += pb.amount();
+            else if (inPrev.test(pb.time())) prevPaidBack += pb.amount();
         }
         for (DataStore.Payment p : payments) {
             if (inRange.test(p.time())) collected += p.amount();
@@ -202,12 +213,18 @@ final class Stats {
         totals.put("costedRevenue", DataStore.round(costedRevenue));
         totals.put("profit", anyCosted ? DataStore.round(costedRevenue - cost) : null);
         totals.put("supplierPaid", DataStore.round(supplierPaid));
+        totals.put("supplierPaidSales", DataStore.round(supplierPaid - paidByStaff));
+        totals.put("supplierPaidStaff", DataStore.round(paidByStaff));
+        totals.put("paidBackToStaff", DataStore.round(paidBack));
         Map<String, Object> previous = null;
         if (prevStart != null) {
             previous = prev.json(prevCollected, prevDiscounts);
             previous.put("cost", DataStore.round(prevCost));
             previous.put("profit", prevAnyCosted ? DataStore.round(prevCostedRevenue - prevCost) : null);
             previous.put("supplierPaid", DataStore.round(prevSupplierPaid));
+            previous.put("supplierPaidSales", DataStore.round(prevSupplierPaid - prevPaidByStaff));
+            previous.put("supplierPaidStaff", DataStore.round(prevPaidByStaff));
+            previous.put("paidBackToStaff", DataStore.round(prevPaidBack));
         }
         return Json.obj(
                 "range", range,
@@ -292,12 +309,11 @@ final class Stats {
             default -> 2;
         }).thenComparingDouble(o -> o.get("daysLeft") == null ? Double.MAX_VALUE : (Double) o.get("daysLeft")));
 
+        // Tanks per size (kg): with load, empty, at the refiller, and all of them together.
         List<Object> sizes = new ArrayList<>();
-        double kgLoaded = 0;
         for (var e : bySize.entrySet()) {
-            kgLoaded += e.getKey() * e.getValue()[0];
-            sizes.add(Json.obj("weight", e.getKey(), "loaded", e.getValue()[0], "empty", e.getValue()[1], "atRefiller", e.getValue()[2],
-                    "kgLoaded", DataStore.round(e.getKey() * e.getValue()[0])));
+            int[] v = e.getValue();
+            sizes.add(Json.obj("weight", e.getKey(), "loaded", v[0], "empty", v[1], "atRefiller", v[2], "total", v[0] + v[1] + v[2]));
         }
 
         List<Object> openRefills = new ArrayList<>();
@@ -342,7 +358,7 @@ final class Stats {
         return Json.obj("items", items, "alerts", alerts, "totalLoaded", totalLoaded, "totalEmpty", totalEmpty,
                 "totalDamaged", totalDamaged, "totalRefiller", totalRefiller, "refills", openRefills, "movements", recent,
                 "owedToRefillers", DataStore.round(owedToRefillers), "owedToSuppliers", DataStore.round(owedToSuppliers),
-                "bySize", sizes, "kgLoaded", DataStore.round(kgLoaded), "suppliers", suppliersOut);
+                "bySize", sizes, "totalTanks", totalLoaded + totalEmpty + totalRefiller, "suppliers", suppliersOut);
     }
 
     /** Who owes money right now, largest balance first. */
@@ -375,6 +391,174 @@ final class Stats {
                     "days", since == null ? null : ChronoUnit.DAYS.between(since.toLocalDate(), LocalDate.now())));
         }
         return Json.obj("total", DataStore.round(total), "customers", owed.size(), "top", out);
+    }
+
+    /** Money staff put in for suppliers from their own pocket: what's still owed to each, and recent entries. */
+    static Map<String, Object> staffMoney(DataStore store) {
+        Map<String, String> supName = store.suppliers().stream()
+                .collect(Collectors.toMap(DataStore.Supplier::id, DataStore.Supplier::name, (a, b) -> a));
+        List<Object> owed = new ArrayList<>();
+        double total = 0;
+        for (var e : store.owedToStaff().entrySet()) {
+            if (e.getValue() <= 0.005) continue;
+            total += e.getValue();
+            owed.add(Json.obj("staff", e.getKey(), "owed", e.getValue()));
+        }
+        List<Map<String, Object>> recent = new ArrayList<>();
+        for (DataStore.SupplierPayment sp : store.supplierPayments()) {
+            if (!sp.fromStaff()) continue;
+            recent.add(Json.obj("time", sp.rawTime(), "kind", "advance", "staff", sp.paidBy(), "amount", sp.amount(),
+                    "supplier", supName.getOrDefault(sp.supplierId(), "supplier"),
+                    "bill", sp.refillId().startsWith("P") ? "new tanks" : "trip #" + sp.refillId(), "by", sp.staff(), "note", sp.note()));
+        }
+        for (DataStore.Payback p : store.paybacks()) {
+            recent.add(Json.obj("time", p.rawTime(), "kind", "payback", "staff", p.staff(), "amount", p.amount(), "by", p.recordedBy(), "note", p.note()));
+        }
+        recent.sort((a, b) -> ((String) b.get("time")).compareTo((String) a.get("time")));
+        return Json.obj("total", DataStore.round(total), "owed", owed, "recent", new ArrayList<>(recent.subList(0, Math.min(20, recent.size()))));
+    }
+
+    /** Everything that happened on one day, for the daily summary. */
+    private static final class Day {
+        int receipts, tanks, tanksLent, tanksReturned, sent, received, bought;
+        double revenue, discounts, swapFees, atSale, later, credit, refillBill, purchaseBill, paidSales, paidStaff, paidBack, cost, costedRevenue;
+        boolean anyCosted;
+        final Map<String, double[]> byProduct = new LinkedHashMap<>(); // label -> tanks, revenue
+        final Map<String, Double> byStaff = new TreeMap<>(); // whose own money paid suppliers
+
+        double collected() { return atSale + later; }
+
+        double cashLeft() { return collected() - paidSales - paidBack; }
+
+        Double profit() { return anyCosted ? DataStore.round(costedRevenue - cost) : null; }
+    }
+
+    /**
+     * The summary of one day (date "YYYY-MM-DD", today when blank): sales, money in and out (with
+     * where supplier money came from), tanks moved, tanks lent and returned, and that day's receipts.
+     * Also one row for each of the `days` days up to it, newest first, to compare and open earlier days.
+     */
+    static Map<String, Object> daily(DataStore store, String dateText, int days) {
+        LocalDate today = LocalDate.now();
+        LocalDate date;
+        try {
+            date = dateText == null || dateText.isBlank() ? today : LocalDate.parse(dateText.trim());
+        } catch (DateTimeParseException e) {
+            throw new Http.Error(400, "The date must look like " + today);
+        }
+        if (date.isAfter(today)) date = today;
+        LocalDate from = date.minusDays(days - 1);
+        final LocalDate day = date;
+        TreeMap<LocalDate, Day> byDay = new TreeMap<>();
+        for (LocalDate d = from; !d.isAfter(date); d = d.plusDays(1)) byDay.put(d, new Day());
+        Function<LocalDateTime, Day> at = t -> t == null ? null : byDay.get(t.toLocalDate());
+
+        Map<String, DataStore.Product> products = store.productMap();
+        Map<String, DataStore.Customer> customers = store.customers().stream()
+                .collect(Collectors.toMap(DataStore.Customer::id, Function.identity(), (a, b) -> a));
+        List<DataStore.Receipt> receipts = store.receipts();
+        Map<String, Double> paid = store.paidByReceipt(receipts);
+        Set<String> uncosted = new TreeSet<>();
+        List<Object> dayReceipts = new ArrayList<>();
+        for (DataStore.Receipt r : receipts) {
+            Day d = at.apply(r.time());
+            if (d == null) continue;
+            d.receipts++;
+            d.tanks += r.qty();
+            d.revenue += r.total();
+            d.discounts += r.discount();
+            d.atSale += r.paidAtSale();
+            d.credit += Math.max(0, r.total() - r.paidAtSale());
+            double sub = r.subtotal(), share = sub > 0 ? r.total() / sub : 0;
+            for (DataStore.Line l : r.lines()) {
+                d.swapFees += l.qty() * l.swapFee();
+                if (l.owesTank()) d.tanksLent += l.qty();
+                DataStore.Product p = products.get(l.productId());
+                double[] v = d.byProduct.computeIfAbsent(p == null ? "Deleted product #" + l.productId() : p.label(), k -> new double[2]);
+                v[0] += l.qty();
+                v[1] += l.amount() * share;
+                double c = lineCost(l, products, r.time().toLocalDate().equals(day) ? uncosted : new HashSet<>());
+                if (c >= 0) {
+                    d.anyCosted = true;
+                    d.cost += c;
+                    d.costedRevenue += l.amount() * share;
+                }
+            }
+            if (r.time().toLocalDate().equals(day)) {
+                double bal = DataStore.balance(r, paid);
+                double got = paid.getOrDefault(r.id(), 0.0);
+                DataStore.Customer c = customers.get(r.customerId());
+                dayReceipts.add(0, Json.obj("id", r.id(), "time", r.rawTime(), "customer", c == null ? "Unknown customer #" + r.customerId() : c.name(),
+                        "items", itemsText(r, products), "total", r.total(), "balance", bal,
+                        "status", bal <= 0 ? "paid" : got <= 0.005 ? "unpaid" : "partial", "staff", r.staff().isEmpty() ? "Desktop app" : r.staff()));
+            }
+        }
+        for (DataStore.Payment p : store.payments()) {
+            Day d = at.apply(p.time());
+            if (d != null) d.later += p.amount();
+        }
+        for (DataStore.TankReturn t : store.tankReturns()) {
+            Day d = at.apply(t.time());
+            if (d != null) d.tanksReturned += t.qty();
+        }
+        for (DataStore.Movement m : store.movements()) {
+            Day d = at.apply(m.time());
+            if (d == null) continue;
+            switch (m.type()) {
+                case "refill-send" -> d.sent += m.atRefiller();
+                case "refill-receive" -> {
+                    d.received += m.loaded();
+                    d.refillBill += m.loaded() * m.unitCost();
+                }
+                case "purchase" -> {
+                    d.bought += m.loaded();
+                    d.purchaseBill += m.loaded() * m.unitCost();
+                }
+                default -> {
+                }
+            }
+        }
+        for (DataStore.SupplierPayment sp : store.supplierPayments()) {
+            Day d = at.apply(sp.time());
+            if (d == null) continue;
+            if (sp.fromStaff()) {
+                d.paidStaff += sp.amount();
+                d.byStaff.merge(sp.paidBy(), sp.amount(), Double::sum);
+            } else {
+                d.paidSales += sp.amount();
+            }
+        }
+        for (DataStore.Payback p : store.paybacks()) {
+            Day d = at.apply(p.time());
+            if (d != null) d.paidBack += p.amount();
+        }
+
+        Day d = byDay.get(date);
+        List<Map.Entry<String, double[]>> prods = new ArrayList<>(d.byProduct.entrySet());
+        prods.sort((a, b) -> Double.compare(b.getValue()[1], a.getValue()[1]));
+        List<Object> productOut = new ArrayList<>();
+        for (var e : prods) productOut.add(Json.obj("label", e.getKey(), "qty", (int) e.getValue()[0], "revenue", DataStore.round(e.getValue()[1])));
+        List<Object> staffOut = new ArrayList<>();
+        d.byStaff.forEach((k, v) -> staffOut.add(Json.obj("staff", k, "amount", DataStore.round(v))));
+        List<Object> rows = new ArrayList<>();
+        for (var e : byDay.descendingMap().entrySet()) {
+            Day x = e.getValue();
+            rows.add(Json.obj("date", e.getKey().toString(), "receipts", x.receipts, "tanks", x.tanks, "revenue", DataStore.round(x.revenue),
+                    "collected", DataStore.round(x.collected()), "paidSuppliers", DataStore.round(x.paidSales + x.paidStaff),
+                    "cashLeft", DataStore.round(x.cashLeft()), "profit", x.profit()));
+        }
+        Map<String, Object> totals = Json.obj(
+                "receipts", d.receipts, "tanks", d.tanks, "revenue", DataStore.round(d.revenue), "discounts", DataStore.round(d.discounts),
+                "swapFees", DataStore.round(d.swapFees), "collectedAtSale", DataStore.round(d.atSale), "collectedLater", DataStore.round(d.later),
+                "collected", DataStore.round(d.collected()), "credit", DataStore.round(d.credit),
+                "tanksLent", d.tanksLent, "tanksReturned", d.tanksReturned, "refillSent", d.sent, "refillReceived", d.received,
+                "refillBill", DataStore.round(d.refillBill), "bought", d.bought, "purchaseBill", DataStore.round(d.purchaseBill),
+                "paidSales", DataStore.round(d.paidSales), "paidStaff", DataStore.round(d.paidStaff), "paidSuppliers", DataStore.round(d.paidSales + d.paidStaff),
+                "paidBack", DataStore.round(d.paidBack), "cashLeft", DataStore.round(d.cashLeft()), "profit", d.profit());
+        return Json.obj("date", date.toString(), "today", date.equals(today), "previous", date.minusDays(1).toString(),
+                "next", date.equals(today) ? null : date.plusDays(1).toString(),
+                "totals", totals, "uncosted", new ArrayList<>(uncosted), "byProduct", productOut, "paidByStaff", staffOut,
+                "receipts", dayReceipts, "days", rows);
     }
 
     /** Customers who took tanks without bringing an empty, most tanks first. */

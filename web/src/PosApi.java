@@ -72,13 +72,15 @@ final class PosApi implements Http.Handler {
         switch (route) {
             case "GET me" -> r.json(200, me(s));
             case "GET summary" -> {
-                // Only staff the admin has chosen may see the business summary.
-                DataStore.User u = store.user(who);
-                if (u == null || !u.dashboard()) throw new Http.Error(403, "Ask the admin for access to the dashboard");
+                requireDashboard(who);
                 String range = r.query().getOrDefault("range", "7");
                 if (!List.of("today", "7", "30", "90", "all").contains(range)) range = "7";
                 r.json(200, Json.obj("stats", Stats.compute(store, range), "inventory", Stats.inventory(store),
-                        "receivables", Stats.receivables(store), "tanksOut", Stats.tanksOut(store)));
+                        "receivables", Stats.receivables(store), "tanksOut", Stats.tanksOut(store), "staffMoney", Stats.staffMoney(store)));
+            }
+            case "GET daily" -> {
+                requireDashboard(who);
+                r.json(200, Stats.daily(store, r.query().getOrDefault("date", ""), 14));
             }
             case "POST me/:id" -> changePassword(r, s, id);
             case "GET data" -> {
@@ -199,12 +201,20 @@ final class PosApi implements Http.Handler {
             case "POST suppliers/:id/pay" -> {
                 DataStore.Supplier sup = store.supplier(id);
                 if (sup == null) throw new Http.Error(404, "Supplier not found");
+                DataStore.Paid paid = paidFields(r, who, 0);
+                String note = limit(r.param("note"), 120, "Note");
+                List<DataStore.SupplierPayment> parts = store.paySupplier(sup, paid, who, note);
+                log.add(who, ip, "Paid ₱" + DataStore.money(paid.total()) + paidText(paid) + " to " + sup.name() + " ("
+                        + parts.stream().map(x -> x.refillId().startsWith("P") ? "new tanks" : "trip #" + x.refillId()).distinct().collect(Collectors.joining(", "))
+                        + ")" + (note.isEmpty() ? "" : " (" + note + ")"));
+                r.json(201, Json.obj("ok", true));
+            }
+            case "POST staff/:id/payback" -> {
+                if (store.user(id) == null && !store.owedToStaff().containsKey(id)) throw new Http.Error(404, "No such staff member");
                 double amount = DataStore.round(number(r.param("amount"), "Amount", 0.01, 100_000_000));
                 String note = limit(r.param("note"), 120, "Note");
-                List<DataStore.SupplierPayment> parts = store.paySupplier(sup, amount, who, note);
-                log.add(who, ip, "Paid ₱" + DataStore.money(amount) + " to " + sup.name() + " ("
-                        + parts.stream().map(x -> x.refillId().startsWith("P") ? "new tanks" : "trip #" + x.refillId()).collect(Collectors.joining(", "))
-                        + ")" + (note.isEmpty() ? "" : " (" + note + ")"));
+                store.payBackStaff(id, amount, who, note);
+                log.add(who, ip, "Paid back ₱" + DataStore.money(amount) + " to " + id + " (money they put in for suppliers)" + (note.isEmpty() ? "" : " (" + note + ")"));
                 r.json(201, Json.obj("ok", true));
             }
             case "POST refills" -> {
@@ -243,25 +253,25 @@ final class PosApi implements Http.Handler {
                     cost += got * each;
                 }
                 if (items.isEmpty()) throw new Http.Error(400, "Enter how many tanks came back");
-                double paid = r.param("paid").isEmpty() ? DataStore.round(cost) : DataStore.round(number(r.param("paid"), "Amount paid", 0, 100_000_000));
+                DataStore.Paid paid = paidFields(r, who, DataStore.round(cost));
                 String note = limit(r.param("note"), 120, "Note");
                 store.receiveFromRefiller(rf, items, costs, paid, who, note);
                 DataStore.Supplier sup = store.supplier(rf.supplierId());
                 StringBuilder msg = new StringBuilder("Received from " + (sup == null ? "refiller" : sup.name()) + " (trip #" + rf.id() + "): ");
                 List<String> parts = new ArrayList<>();
                 items.forEach((p, v) -> parts.add(v[0] + " × " + p.label() + (v[1] > 0 ? " (+" + v[1] + " unfilled)" : "")));
-                log.add(who, ip, msg + String.join(", ", parts) + " · cost ₱" + DataStore.money(cost) + ", paid ₱" + DataStore.money(paid)
+                log.add(who, ip, msg + String.join(", ", parts) + " · cost ₱" + DataStore.money(cost) + ", paid ₱" + DataStore.money(paid.total()) + paidText(paid)
                         + (note.isEmpty() ? "" : " (" + note + ")"));
                 r.json(200, Json.obj("ok", true));
             }
             case "POST refills/:id/pay" -> {
                 DataStore.Refill rf = store.refills().stream().filter(x -> x.id().equals(id)).findFirst()
                         .orElseThrow(() -> new Http.Error(404, "Refill trip not found"));
-                double amount = DataStore.round(number(r.param("amount"), "Amount", 0.01, 100_000_000));
+                DataStore.Paid paid = paidFields(r, who, 0);
                 String note = limit(r.param("note"), 120, "Note");
-                store.payRefiller(rf, amount, who, note);
+                store.payRefiller(rf, paid, who, note);
                 DataStore.Supplier sup = store.supplier(rf.supplierId());
-                log.add(who, ip, "Paid ₱" + DataStore.money(amount) + " to " + (sup == null ? "refiller" : sup.name()) + " for trip #" + rf.id()
+                log.add(who, ip, "Paid ₱" + DataStore.money(paid.total()) + paidText(paid) + " to " + (sup == null ? "refiller" : sup.name()) + " for trip #" + rf.id()
                         + (note.isEmpty() ? "" : " (" + note + ")"));
                 r.json(201, Json.obj("ok", true));
             }
@@ -280,10 +290,10 @@ final class PosApi implements Http.Handler {
                 int qty = whole(r.param("qty"), "Tanks bought", 1, 1_000);
                 double cost = r.param("unitCost").isEmpty() ? p.tankCost() : DataStore.round(number(r.param("unitCost"), "Cost per tank", 0, 1_000_000));
                 double bill = DataStore.round(qty * cost);
-                double paid = r.param("paid").isEmpty() ? bill : DataStore.round(number(r.param("paid"), "Amount paid", 0, 100_000_000));
+                DataStore.Paid paid = paidFields(r, who, bill);
                 store.purchase(p, qty, cost, paid, who, note);
                 log.add(who, ip, "Bought " + qty + " new " + p.label() + " tanks with load"
-                        + (cost > 0 ? " for ₱" + DataStore.money(bill) + (paid < bill - 0.005 ? " (paid ₱" + DataStore.money(paid) + ", rest later)" : "") : "") + suffix);
+                        + (cost > 0 ? " for ₱" + DataStore.money(bill) + (paid.total() < bill - 0.005 ? " (paid ₱" + DataStore.money(paid.total()) + ", rest later)" : "") + paidText(paid) : "") + suffix);
             }
             case "adjust" -> {
                 int loaded = whole(r.param("loaded"), "Tanks with load", 0, 10_000);
@@ -323,6 +333,33 @@ final class PosApi implements Http.Handler {
         if (s == null) throw new Http.Error(404, "Supplier not found");
         log.add(who, ip, (id == null ? "Added supplier " : "Edited supplier ") + s.name() + " (" + String.join(", ", s.brands()) + ")");
         r.json(id == null ? 201 : 200, Json.obj("id", s.id()));
+    }
+
+    private void requireDashboard(String who) {
+        // Only staff the admin has chosen may see the business summary.
+        DataStore.User u = store.user(who);
+        if (u == null || !u.dashboard()) throw new Http.Error(403, "Ask the admin for access to the dashboard");
+    }
+
+    /**
+     * Money handed to a supplier, by source: paidSales (store money) and paidStaff (a staff member's own
+     * money, paidBy; the store owes it back). Older clients send one "amount" or "paid", taken as sales money.
+     * With nothing sent, the whole bill (fallback) counts as paid from sales.
+     */
+    private DataStore.Paid paidFields(Http.Req r, String who, double fallback) throws IOException {
+        boolean split = !r.param("paidSales").isEmpty() || !r.param("paidStaff").isEmpty();
+        String single = !r.param("amount").isEmpty() ? r.param("amount") : r.param("paid");
+        double sales = split ? (r.param("paidSales").isEmpty() ? 0 : number(r.param("paidSales"), "Paid from sales", 0, 100_000_000))
+                : single.isEmpty() ? fallback : number(single, "Amount paid", 0, 100_000_000);
+        double staff = r.param("paidStaff").isEmpty() ? 0 : number(r.param("paidStaff"), "Paid from staff money", 0, 100_000_000);
+        String by = r.param("paidBy").isEmpty() ? who : r.param("paidBy");
+        if (staff > 0 && store.user(by) == null) throw new Http.Error(400, "Choose whose money it was");
+        return new DataStore.Paid(DataStore.round(sales), DataStore.round(staff), staff > 0 ? by : "");
+    }
+
+    private static String paidText(DataStore.Paid p) {
+        if (p.staff() <= 0) return "";
+        return " (₱" + DataStore.money(p.sales()) + " from sales, ₱" + DataStore.money(p.staff()) + " from " + p.byStaff() + "'s own money)";
     }
 
     static String stockStatus(DataStore.Stock st, int reorderLevel) {
@@ -489,6 +526,7 @@ final class PosApi implements Http.Handler {
             returnOut.add(Json.obj("time", t.rawTime(), "customerId", t.customerId(), "customer", c == null ? "Deleted customer #" + t.customerId() : c.name(),
                     "productId", t.productId(), "product", productName.apply(t.productId()), "qty", t.qty(), "staff", t.staff(), "remark", t.remark()));
         }
+        List<DataStore.SupplierPayment> supplierPays = store.supplierPayments();
         List<DataStore.Refill> refills = store.refills();
         List<Object> refillOut = new ArrayList<>();
         int closedShown = 0;
@@ -497,6 +535,7 @@ final class PosApi implements Http.Handler {
             List<DataStore.RefillItem> items = store.refillItems(rf.id());
             boolean open = items.stream().anyMatch(x -> x.outstanding() > 0);
             double cost = store.refillCost(rf.id()), paidOut = store.refillPaid(rf.id());
+            double paidStaff = DataStore.round(supplierPays.stream().filter(p -> rf.id().equals(p.refillId()) && p.fromStaff()).mapToDouble(DataStore.SupplierPayment::amount).sum());
             double owed = DataStore.round(Math.max(0, cost - paidOut));
             if (!open && owed <= 0 && closedShown++ >= 10) continue;
             List<Object> itemOut = new ArrayList<>();
@@ -507,11 +546,12 @@ final class PosApi implements Http.Handler {
             DataStore.Supplier sup = supById.get(rf.supplierId());
             refillOut.add(Json.obj("id", rf.id(), "time", rf.rawTime(), "supplierId", rf.supplierId(),
                     "supplier", sup == null ? "Deleted supplier" : sup.name(), "staff", rf.staff(), "note", rf.note(),
-                    "open", open, "items", itemOut, "cost", cost, "paid", paidOut, "owed", owed));
+                    "open", open, "items", itemOut, "cost", cost, "paid", paidOut, "paidStaff", paidStaff, "owed", owed));
         }
         List<String> brands = products.stream().map(DataStore.Product::brand).distinct().sorted(String.CASE_INSENSITIVE_ORDER).toList();
         return Json.obj("customers", custOut, "products", prodOut, "receipts", receiptOut, "movements", moveOut,
-                "suppliers", supOut, "refills", refillOut, "brands", brands, "returns", returnOut);
+                "suppliers", supOut, "refills", refillOut, "brands", brands, "returns", returnOut,
+                "staff", store.users().stream().map(DataStore.User::username).toList(), "staffMoney", Stats.staffMoney(store));
     }
 
     /** data() for one viewer: adds their own permissions, which the ETag also covers (WebUsers.csv is in it). */

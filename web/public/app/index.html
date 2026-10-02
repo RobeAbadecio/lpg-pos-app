@@ -196,6 +196,10 @@
             <div id="suppliers"></div>
           </div>
           <div class="card">
+            <div class="card-head"><div><h2>Staff money</h2><div class="sub" id="staff-money-sub"></div></div></div>
+            <div id="staff-money"></div>
+          </div>
+          <div class="card">
             <div class="card-head"><div><h2>Stock history</h2><div class="sub">Refills, purchases and counts. Sales are taken off automatically.</div></div></div>
             <div id="movements"></div>
           </div>
@@ -205,6 +209,12 @@
       <!-- Dashboard: only for staff the admin has allowed -->
       <section id="view-dashboard" class="view" hidden>
         <div class="stack">
+          <div class="seg dash-switch" role="radiogroup" aria-label="Dashboard view">
+            <button type="button" role="radio" data-dash="daily">Daily summary</button>
+            <button type="button" role="radio" data-dash="trends">Trends</button>
+          </div>
+          <div id="dash-daily" class="daily"></div>
+          <div id="dash-trends" class="stack" hidden>
           <div class="filters" role="group" aria-label="Date range">
             <button class="chip" data-range="today">Today</button>
             <button class="chip" data-range="7">7 days</button>
@@ -224,7 +234,7 @@
               <div class="card tile"><div class="label">Receipts</div><div class="value" id="d-count">—</div><div class="delta" id="d-count-delta"></div></div>
               <div class="card tile"><div class="label">Tanks sold</div><div class="value" id="d-qty">—</div><div class="delta" id="d-qty-delta"></div></div>
               <div class="card tile"><div class="label">Cash collected</div><div class="value" id="d-collected">—</div><div class="delta" id="d-collected-delta"></div></div>
-              <div class="card tile"><div class="label">Paid to suppliers</div><div class="value" id="d-supplier">—</div><div class="delta" id="d-supplier-delta"></div></div>
+              <div class="card tile"><div class="label">Paid to suppliers</div><div class="value" id="d-supplier">—</div><div class="delta" id="d-supplier-delta"></div><div class="tile-note" id="d-supplier-note"></div></div>
               <div class="card tile"><div class="label">Gross profit (est.)</div><div class="value" id="d-profit">—</div><div class="delta" id="d-profit-delta"></div><div class="tile-note" id="d-profit-note"></div></div>
             </section>
             <div class="dash-two">
@@ -247,10 +257,17 @@
                 <div id="d-unpaid"></div>
               </section>
             </div>
-            <section class="card">
-              <div class="card-head"><div><h2>Owed to suppliers</h2><div class="sub" id="d-suppliers-sub"></div></div></div>
-              <div id="d-suppliers"></div>
-            </section>
+            <div class="dash-two">
+              <section class="card">
+                <div class="card-head"><div><h2>Owed to suppliers</h2><div class="sub" id="d-suppliers-sub"></div></div></div>
+                <div id="d-suppliers"></div>
+              </section>
+              <section class="card">
+                <div class="card-head"><div><h2>Owed to staff</h2><div class="sub" id="d-staff-sub"></div></div></div>
+                <div id="d-staff"></div>
+              </section>
+            </div>
+          </div>
           </div>
         </div>
       </section>
@@ -271,6 +288,7 @@
   <script src="/shared/version.js"></script>
   <script src="/shared/ui.js"></script>
   <script src="/shared/charts.js"></script>
+  <script src="/shared/daily.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

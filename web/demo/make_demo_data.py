@@ -132,6 +132,7 @@ def generate(data_dir):
     supplier_payments = []  # [time, supplierIdx, tripId or purchase move, kind, amount, staff, note]
     later_payments = []  # (due datetime, supplierIdx, tripId or purchase move, kind, amount)
     tank_returns = []  # [time, customerId, productIdx, qty, staff, remark]
+    paybacks = []  # [time, staff paid back, amount, recorded by, note]
     returns_due = []  # (date, customerId, productIdx owed, qty)
 
     def refill_price(i, day):
@@ -184,7 +185,17 @@ def generate(data_dir):
             bill = round(bill, 2)
             if bill > 0:
                 s_idx = supplier_of[next(iter(trip["items"]))]
-                if rng.random() < 0.9:
+                if rng.random() < 0.15:
+                    # Not enough cash from sales: whoever is on shift puts in their own money, paid back in a few days.
+                    who = on_shift(when)
+                    own = float(min(bill, rng.choice([500, 1000, 1500, 2000])))  # what one person can spare
+                    if bill - own > 0.005:
+                        supplier_payments.append([when, s_idx, trip["id"], "refill", round(bill - own, 2), who, "Cash"])
+                    supplier_payments.append([when, s_idx, trip["id"], "refill", own, who, "Own money", "staff", who])
+                    back = when + dt.timedelta(days=rng.randint(1, 5), hours=rng.randint(1, 6))
+                    if back <= now and rng.random() < 0.85:
+                        paybacks.append([back, who, own, "ana", "Cash from the drawer"])
+                elif rng.random() < 0.9:
                     supplier_payments.append([when, s_idx, trip["id"], "refill", bill, on_shift(when), "Cash"])
                 else:
                     half = round(bill / 2, 2)
@@ -354,7 +365,11 @@ def generate(data_dir):
             supplier_payments.append([due, s_idx, ref, kind, amount, on_shift(due), "Balance"])
     supplier_payments.sort(key=lambda x: x[0])
     write_csv(os.path.join(data_dir, "SupplierPayments.csv"),
-              [[str(n + 1), x[0].strftime(TIME), str(x[1] + 1), bill_key(x[2]), x[3], money(x[4]), x[5], x[6]] for n, x in enumerate(supplier_payments)])
+              [[str(n + 1), x[0].strftime(TIME), str(x[1] + 1), bill_key(x[2]), x[3], money(x[4]), x[5], x[6],
+                x[7] if len(x) > 7 else "sales", x[8] if len(x) > 8 else ""] for n, x in enumerate(supplier_payments)])
+    paybacks.sort(key=lambda x: x[0])
+    write_csv(os.path.join(data_dir, "StaffPaybacks.csv"),
+              [[str(n + 1), x[0].strftime(TIME), x[1], money(x[2]), x[3], x[4]] for n, x in enumerate(paybacks)])
     tank_returns.sort(key=lambda x: x[0])
     write_csv(os.path.join(data_dir, "TankReturns.csv"),
               [[str(n + 1), x[0].strftime(TIME), x[1], str(x[2] + 1), str(x[3]), x[4], x[5]] for n, x in enumerate(tank_returns)])
@@ -403,6 +418,9 @@ def generate(data_dir):
         when = dt.datetime.strptime(p[1], TIME)
         if when >= cutoff:
             log.append((when, p[5], STAFF[p[5]][1], f"Payment ₱{p[4]} from {name[p[3]]} for receipt #{p[2]}"))
+    for x in paybacks:
+        if x[0] >= cutoff:
+            log.append((x[0], x[3], STAFF[x[3]][1], f"Paid back ₱{money(x[2])} to {x[1]} (money they put in for suppliers)"))
     for x in tank_returns:
         if x[0] >= cutoff:
             log.append((x[0], x[4], STAFF[x[4]][1], f"{name[x[1]]} returned {x[3]} empty {label[x[2]]}" + (f" [{x[5]}]" if x[5] else "")))
@@ -421,7 +439,7 @@ def generate(data_dir):
 
     print(f"Fake data written to {data_dir}: {len(customers)} customers, {len(products)} products, {len(receipts)} receipts "
           f"({len(lines)} items), {len(payments)} payments, {len(refills)} refill trips, {len(supplier_payments)} supplier payments, "
-          f"{len(tank_returns)} tank returns, {len(moves)} stock movements. Logins: {LOGINS}")
+          f"{len(tank_returns)} tank returns, {len(paybacks)} staff paybacks, {len(moves)} stock movements. Logins: {LOGINS}")
     print("Stock now (with load/empty/at refiller): " + ", ".join(
         f"{label[i]} {loaded[i]}/{empty[i]}/{at_refiller[i]}" for i in range(len(PRODUCTS))))
 

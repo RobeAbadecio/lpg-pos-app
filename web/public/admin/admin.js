@@ -66,6 +66,7 @@
     renderInventory(o.inventory);
     renderReceivables(o.receivables);
     renderTanksOut(o.tanksOut);
+    renderStaffMoney(o.staffMoney);
     renderSessions(o.sessions);
     renderUsers(o.users);
     renderActivity(o.activity);
@@ -157,8 +158,8 @@
         h('p', {}, attention.map((i) => (i.loaded <= 0 ? `${i.label}: none with load` : `${i.label}: ${i.loaded} with load (${daysText(i.daysLeft, i.loaded)})`)
           + (i.atRefiller ? `, ${i.atRefiller} at refiller` : i.empty ? `, ${i.empty} empty to send` : '')).join(' · ')))) : null);
 
-    $('inventory-sub').textContent = `${count.format(inv.totalLoaded)} with load · ${count.format(inv.totalEmpty)} empty · ${count.format(inv.totalRefiller)} at refiller · ${count.format(inv.kgLoaded)} kg of LPG`;
-    sizeTable($('by-size'), inv.bySize, inv.kgLoaded);
+    $('inventory-sub').textContent = `${count.format(inv.totalLoaded)} with load · ${count.format(inv.totalEmpty)} empty · ${count.format(inv.totalRefiller)} at refiller · ${count.format(inv.totalTanks)} tanks in all`;
+    sizeTable($('by-size'), inv.bySize);
     // Group by supplier (most urgent product first within each), so each refiller's brands sit together.
     const groups = [];
     for (const i of inv.items) {
@@ -217,6 +218,19 @@
       h('div', {}, h('div', {}, c.customer),
         h('div', { class: 'meta' }, `${c.items}${c.since ? ` · since ${fmtTime(c.since)}${c.days ? ` (${c.days} days)` : ''}` : ''}`)),
       h('strong', { class: 'num' }, `${c.tanks} tank${c.tanks === 1 ? '' : 's'}`)))) : h('div', { class: 'empty' }, 'No customer owes a tank.'));
+  }
+
+  // Staff who paid suppliers from their own pocket: what the store still owes them.
+  function renderStaffMoney(m) {
+    $('staff-money-sub').textContent = m.total > 0 ? `The store owes staff ${peso.format(m.total)}` : 'Nobody is owed anything';
+    clear($('staff-money'),
+      m.owed.length ? h('div', { class: 'list' }, m.owed.map((o) => h('div', { class: 'owe-row' }, h('span', {}, o.staff), h('strong', { class: 'num' }, peso.format(o.owed)))))
+        : h('div', { class: 'empty' }, 'Staff paying suppliers with their own money shows here until they’re paid back.'),
+      m.recent.length ? h('h3', { class: 'minor-head' }, 'Recent') : null,
+      m.recent.slice(0, 6).map((e) => h('div', { class: 'move-row' },
+        h('div', {}, h('strong', {}, e.kind === 'advance' ? `${e.staff} paid ${e.supplier}` : `Paid back to ${e.staff}`), e.kind === 'advance' ? ` · ${e.bill}` : ''),
+        h('div', { class: 'num ' + (e.kind === 'advance' ? 'owes-text' : 'secondary') }, (e.kind === 'advance' ? '+' : '−') + peso.format(e.amount)),
+        h('div', { class: 'meta' }, [fmtTime(e.time), e.by, e.note].filter(Boolean).join(' · ')))));
   }
 
   function renderSessions(sessions) {
@@ -355,6 +369,7 @@
     delta($('kpi-collected-delta'), t.collected, p && p.collected, s.compare);
     $('kpi-supplier').textContent = UI.pesoRound.format(t.supplierPaid);
     delta($('kpi-supplier-delta'), t.supplierPaid, p && p.supplierPaid, s.compare, true);
+    $('kpi-supplier-note').textContent = t.supplierPaidStaff ? `${peso.format(t.supplierPaidSales)} from sales · ${peso.format(t.supplierPaidStaff)} staff money` : t.supplierPaid ? 'All from sales' : '';
     $('kpi-profit').textContent = t.profit == null ? '—' : UI.pesoRound.format(t.profit);
     delta($('kpi-profit-delta'), t.profit, p && p.profit, s.compare);
     // Profit = sales − each tank's refill (or new-tank) cost. Products without a cost can't be counted.
@@ -422,6 +437,8 @@
 
   markRange();
   UI.watchVersion();
+  const daily = Daily.mount($('daily'), (date) => request('GET', '/api/daily?date=' + encodeURIComponent(date)));
+  setInterval(() => { if (document.visibilityState === 'visible' && !document.querySelector('dialog[open]')) daily.refresh(); }, 30000);
   loadOverview();
   loadStats();
   setInterval(() => { if (document.visibilityState === 'visible') loadOverview(); }, 4000);

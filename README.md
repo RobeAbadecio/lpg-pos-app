@@ -4,7 +4,7 @@ A point-of-sale system for an LPG (cooking gas) retail store. Staff record sales
 
 It started as a Java Swing desktop app (`src/`). The web version in `web/` uses the same CSV data, so both read the same files.
 
-**Current version: 3.0.1.** See [CHANGELOG.md](CHANGELOG.md) for what changed in each version. The number is shown in the POS and on the dashboard.
+**Current version: 3.1.0.** See [CHANGELOG.md](CHANGELOG.md) for what changed in each version. The number is shown in the POS and on the dashboard.
 
 ## Features
 
@@ -16,8 +16,9 @@ It started as a Java Swing desktop app (`src/`). The web version in `web/` uses 
 - Customers (balances, tanks owed, last purchase) and LPG products (refill price, swap fee, refill cost, new-tank cost).
 - Inventory: tanks with load, empty tanks and tanks at the refiller, grouped by supplier. Each supplier refills only its own brand.
   - Refiller trips can come back in parts, with the refiller's bill, what was paid and what's still owed.
-  - Also: new-tank purchases (pay now or later), what each supplier is owed with a Pay button, totals per tank size with the kg of LPG, stock counts, write-offs and low-stock alerts. A sale can't take more than is in stock.
-- A Dashboard tab for staff the admin chooses: sales, profit, stock by size, tanks not returned and balances.
+  - Also: new-tank purchases (pay now or later), what each supplier is owed with a Pay button, totals per tank size, stock counts, write-offs and low-stock alerts. A sale can't take more than is in stock.
+  - Every supplier payment records how much came from sales and how much from a staff member's own money; the store pays staff back from the Staff money card.
+- A Dashboard tab for staff the admin chooses: a daily summary (any day, with the days before) and trends: sales, profit, stock by size, tanks not returned and balances.
 
 **Admin dashboard** (only reachable on the host machine)
 - Revenue, receipts, cylinders sold, average sale, customers served, cash collected, money paid to suppliers and estimated gross profit, compared with the previous period
@@ -88,7 +89,8 @@ This generates about 4 months of made-up sales, customers, staff and stock. It n
 | `StockMovements.csv` | id, dateTime, lpgId, type, loadedDelta, emptyDelta, staff, note[, damagedDelta, refillerDelta, refillId, unitCost] |
 | `Suppliers.csv` | id, name, contact, brand (one per supplier), note |
 | `Refills.csv` | id, dateTime, supplierId, staff, note (one row per trip to the refiller) |
-| `SupplierPayments.csv` | id, dateTime, supplierId, refillId (trip id, or "P" + purchase movement id), kind, amount, staff, note |
+| `SupplierPayments.csv` | id, dateTime, supplierId, refillId (trip id, or "P" + purchase movement id), kind, amount, staff, note[, source (sales or staff), paidBy] |
+| `StaffPaybacks.csv` | id, dateTime, staff, amount, recordedBy, note (the store paying staff back) |
 | `TankReturns.csv` | id, dateTime, customerId, lpgId, qty, staff, remark (empties brought back by customers who owed them) |
 | `WebUsers.csv` | username, salt, hash, created[, dashboard] |
 

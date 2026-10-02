@@ -57,6 +57,7 @@ final class AdminApi implements Http.Handler {
         switch (route) {
             case "GET overview" -> r.json(200, overview());
             case "GET stats" -> r.json(200, Stats.compute(store, r.query().getOrDefault("range", "30")));
+            case "GET daily" -> r.json(200, Stats.daily(store, r.query().getOrDefault("date", ""), 14));
 
             case "POST users" -> {
                 String username = r.param("username").toLowerCase(Locale.ROOT);
@@ -150,6 +151,7 @@ final class AdminApi implements Http.Handler {
                 "inventory", Stats.inventory(store),
                 "receivables", Stats.receivables(store),
                 "tanksOut", Stats.tanksOut(store),
+                "staffMoney", Stats.staffMoney(store),
                 "sessions", sessionOut,
                 "users", users,
                 "activity", activity);

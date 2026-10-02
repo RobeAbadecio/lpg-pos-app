@@ -4,6 +4,25 @@ Every update gets a new version number. It's shown in the POS (header, account m
 
 Numbering is `major.minor.patch`: **major** when the data or the way staff work changes a lot, **minor** for new features, **patch** for fixes and small changes.
 
+## 3.1.0 — 2026-10-02
+
+**Daily summary**
+- The Dashboard opens on **Daily summary**: one day's sales, cash from customers, money paid to suppliers, cash left from sales, estimated profit, tanks sold, tanks in and out, money details and that day's receipts.
+- **‹ ›**, a date picker and a **Previous days** table (the last 14 days) open earlier days. **Trends** is the range view as before.
+- The admin dashboard has the same daily summary.
+
+**Tanks instead of kg**
+- The kg of LPG is gone. Each tank size shows its **total tanks** (with load + empty + at the refiller), with an all-sizes total.
+
+**Who paid the supplier**
+- Paying a refiller or supplier (on receiving, Pay refiller, Pay, Buy new tanks) records **from sales** and **staff's own money** separately, plus whose money it was, with the total paid.
+- A **Staff money** card shows what the store owes each staff member, with **Pay back**.
+- The dashboards split "Paid to suppliers" by source and show what's **owed to staff**.
+
+**Data**
+- New columns `source` and `paidBy` in `SupplierPayments.csv`; older payments count as paid from sales.
+- New file `StaffPaybacks.csv`.
+
 ## 3.0.1 — 2026-10-02
 
 - Admin dashboard: dashboard access for each staff account is now a clear on/off **switch**. Before, it was a button that looked like plain text. If saving fails, the switch flips back and says why.

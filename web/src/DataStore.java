@@ -22,8 +22,10 @@ import java.util.function.Predicate;
  * Suppliers.csv       id,name,contact,brand,note        each supplier refills only its own brand
  *                                                        (rows from earlier test builds may list several, separated by ";")
  * Refills.csv         id,dateTime,supplierId,staff,note  one row per trip to the refiller
- * SupplierPayments.csv id,dateTime,supplierId,refillId,kind,amount,staff,note   money paid to refillers/suppliers;
- *                     refillId is the trip id, or "P" + the purchase's movement id for new tanks bought
+ * SupplierPayments.csv id,dateTime,supplierId,refillId,kind,amount,staff,note[,source,paidBy]   money paid to
+ *                     refillers/suppliers; refillId is the trip id, or "P" + the purchase's movement id for new
+ *                     tanks bought; source "sales" (the store's money, the default) or "staff" (paidBy's own money)
+ * StaffPaybacks.csv   id,dateTime,staff,amount,recordedBy,note   the store paying staff back for money they put in
  * TankReturns.csv     id,dateTime,customerId,lpgId,qty,staff,remark     empties brought back by customers who owed them
  * WebUsers.csv        username,salt,hash,created[,dashboard]             dashboard "1": may see the summary dashboard
  *
@@ -96,9 +98,19 @@ final class DataStore {
                     int loaded, int empty, int damaged, int atRefiller, String staff, String note, String refillId,
                     double unitCost) {}
 
-    /** kind: refill | purchase */
+    /** kind: refill | purchase. source: "sales" (store money) or "staff" (paidBy paid from their own pocket). */
     record SupplierPayment(String id, String rawTime, LocalDateTime time, String supplierId, String refillId,
-                           String kind, double amount, String staff, String note) {}
+                           String kind, double amount, String staff, String note, String source, String paidBy) {
+        boolean fromStaff() { return "staff".equals(source); }
+    }
+
+    /** One payment to a supplier, split by where the money came from. byStaff: whose own money "staff" is. */
+    record Paid(double sales, double staff, String byStaff) {
+        double total() { return round(sales + staff); }
+    }
+
+    /** The store paying a staff member back for money they put in. */
+    record Payback(String id, String rawTime, LocalDateTime time, String staff, double amount, String recordedBy, String note) {}
 
     record Stock(int loaded, int empty, int damaged, int atRefiller) {
         static final Stock NONE = new Stock(0, 0, 0, 0);
@@ -149,7 +161,7 @@ final class DataStore {
 
     private final Path dir;
     private final Object lock = new Object();
-    private final Table customers, products, lines, receipts, payments, movements, suppliers, refills, supplierPayments, tankReturns, users;
+    private final Table customers, products, lines, receipts, payments, movements, suppliers, refills, supplierPayments, tankReturns, paybacks, users;
     private final List<Table> all;
 
     DataStore(Path dir) throws IOException {
@@ -165,9 +177,10 @@ final class DataStore {
         refills = new Table("Refills.csv");
         supplierPayments = new Table("SupplierPayments.csv");
         tankReturns = new Table("TankReturns.csv");
+        paybacks = new Table("StaffPaybacks.csv");
         users = new Table("WebUsers.csv");
         // users too: the POS data carries the viewer's dashboard permission.
-        all = List.of(customers, products, lines, receipts, payments, movements, suppliers, refills, supplierPayments, tankReturns, users);
+        all = List.of(customers, products, lines, receipts, payments, movements, suppliers, refills, supplierPayments, tankReturns, paybacks, users);
     }
 
     Path dir() { return dir; }
@@ -753,9 +766,9 @@ final class DataStore {
 
     /**
      * Tanks back from the refiller: received ones come back with load (at costs[product] each),
-     * unfilled ones come back as empty tanks, free. paidNow is what was handed to the refiller.
+     * unfilled ones come back as empty tanks, free. paid is what was handed to the refiller, and from whose money.
      */
-    void receiveFromRefiller(Refill refill, Map<Product, int[]> items, Map<Product, Double> costs, double paidNow,
+    void receiveFromRefiller(Refill refill, Map<Product, int[]> items, Map<Product, Double> costs, Paid paid,
                              String staff, String note) {
         synchronized (lock) {
             Map<String, RefillItem> open = new HashMap<>();
@@ -769,13 +782,13 @@ final class DataStore {
                 added += e.getValue()[0] * costs.getOrDefault(e.getKey(), 0.0);
             }
             double owed = round(refillCost(refill.id()) + added - refillPaid(refill.id()));
-            if (paidNow > owed + 0.005) throw new Conflict("That's more than the ₱" + money(Math.max(0, owed)) + " this trip costs.");
+            if (paid.total() > owed + 0.005) throw new Conflict("That's more than the ₱" + money(Math.max(0, owed)) + " this trip costs.");
             for (var e : items.entrySet()) {
                 int got = e.getValue()[0], rejected = e.getValue()[1];
                 if (got > 0) addMovement(e.getKey(), "refill-receive", got, 0, 0, -got, staff, note, refill.id(), costs.getOrDefault(e.getKey(), 0.0));
                 if (rejected > 0) addMovement(e.getKey(), "refill-reject", 0, rejected, 0, -rejected, staff, note, refill.id());
             }
-            if (paidNow > 0) addSupplierPayment(refill.supplierId(), refill.id(), "refill", paidNow, staff, note);
+            addPaid(refill.supplierId(), refill.id(), "refill", paid, staff, note);
         }
     }
 
@@ -793,28 +806,35 @@ final class DataStore {
     }
 
     /** Pays (part of) what a refill trip still owes. */
-    SupplierPayment payRefiller(Refill refill, double amount, String staff, String note) {
+    void payRefiller(Refill refill, Paid paid, String staff, String note) {
         synchronized (lock) {
             double owed = round(refillCost(refill.id()) - refillPaid(refill.id()));
             if (owed <= 0) throw new Conflict("Nothing is owed on this trip.");
-            if (amount > owed + 0.005) throw new Conflict("That's more than the ₱" + money(owed) + " still owed on this trip.");
-            return addSupplierPayment(refill.supplierId(), refill.id(), "refill", amount, staff, note);
+            if (paid.total() <= 0) throw new Conflict("Enter how much was paid.");
+            if (paid.total() > owed + 0.005) throw new Conflict("That's more than the ₱" + money(owed) + " still owed on this trip.");
+            addPaid(refill.supplierId(), refill.id(), "refill", paid, staff, note);
         }
     }
 
-    /** New tanks with load bought from the brand's supplier; paidNow can be less than the bill (pay later). */
-    Movement purchase(Product p, int qty, double unitCost, double paidNow, String staff, String note) {
+    /** New tanks with load bought from the brand's supplier; what's paid now can be less than the bill (pay later). */
+    Movement purchase(Product p, int qty, double unitCost, Paid paid, String staff, String note) {
         synchronized (lock) {
             double bill = round(qty * unitCost);
-            if (paidNow > bill + 0.005) throw new Conflict("That's more than the ₱" + money(bill) + " these tanks cost.");
+            if (paid.total() > bill + 0.005) throw new Conflict("That's more than the ₱" + money(bill) + " these tanks cost.");
             Supplier s = supplierFor(p.brand());
-            if (s == null && paidNow < bill - 0.005) {
-                throw new Conflict("Add the supplier for " + p.brand() + " first, so the unpaid ₱" + money(round(bill - paidNow)) + " is owed to someone.");
+            if (s == null && paid.total() < bill - 0.005) {
+                throw new Conflict("Add the supplier for " + p.brand() + " first, so the unpaid ₱" + money(round(bill - paid.total())) + " is owed to someone.");
             }
             Movement m = addMovement(p, "purchase", qty, 0, 0, 0, staff, note, null, unitCost);
-            if (paidNow > 0) addSupplierPayment(s == null ? "" : s.id(), "P" + m.id(), "purchase", round(paidNow), staff, note);
+            addPaid(s == null ? "" : s.id(), "P" + m.id(), "purchase", paid, staff, note);
             return m;
         }
+    }
+
+    /** One row per source of money (sales, a staff member's own), for the same bill. */
+    private void addPaid(String supplierId, String billKey, String kind, Paid paid, String staff, String note) {
+        if (paid.sales() > 0) addSupplierPayment(supplierId, billKey, kind, round(paid.sales()), staff, note, "sales", "");
+        if (paid.staff() > 0) addSupplierPayment(supplierId, billKey, kind, round(paid.staff()), staff, note, "staff", paid.byStaff());
     }
 
     /**
@@ -862,20 +882,27 @@ final class DataStore {
         }
     }
 
-    /** Pays a supplier, settling their oldest unpaid bills first. */
-    List<SupplierPayment> paySupplier(Supplier s, double amount, String staff, String note) {
+    /** Pays a supplier, settling their oldest unpaid bills first (the sales money first, then staff money). */
+    List<SupplierPayment> paySupplier(Supplier s, Paid paid, String staff, String note) {
         synchronized (lock) {
             List<Bill> owing = bills().stream().filter(b -> b.supplierId().equals(s.id()) && b.owed() > 0).toList();
             double owed = round(owing.stream().mapToDouble(Bill::owed).sum());
             if (owed <= 0) throw new Conflict("Nothing is owed to " + s.name() + ".");
-            if (amount > owed + 0.005) throw new Conflict("That's more than the ₱" + money(owed) + " owed to " + s.name() + ".");
+            if (paid.total() <= 0) throw new Conflict("Enter how much was paid.");
+            if (paid.total() > owed + 0.005) throw new Conflict("That's more than the ₱" + money(owed) + " owed to " + s.name() + ".");
             List<SupplierPayment> out = new ArrayList<>();
-            double left = round(amount);
+            double[] left = {round(paid.sales()), round(paid.staff())};
+            String[] source = {"sales", "staff"};
+            int k = 0;
             for (Bill b : owing) {
-                if (left <= 0) break;
-                double part = round(Math.min(left, b.owed()));
-                out.add(addSupplierPayment(s.id(), b.key(), b.kind(), part, staff, note));
-                left = round(left - part);
+                double due = b.owed();
+                while (due > 0.005 && k < 2) {
+                    if (left[k] <= 0.005) { k++; continue; }
+                    double part = round(Math.min(left[k], due));
+                    out.add(addSupplierPayment(s.id(), b.key(), b.kind(), part, staff, note, source[k], k == 1 ? paid.byStaff() : ""));
+                    left[k] = round(left[k] - part);
+                    due = round(due - part);
+                }
             }
             return out;
         }
@@ -886,19 +913,58 @@ final class DataStore {
             List<SupplierPayment> out = new ArrayList<>();
             for (String[] r : supplierPayments.rows()) {
                 out.add(new SupplierPayment(col(r, 0), col(r, 1), parseTime(col(r, 1)), col(r, 2), col(r, 3), col(r, 4),
-                        num(col(r, 5), 0), col(r, 6), col(r, 7)));
+                        num(col(r, 5), 0), col(r, 6), col(r, 7), "staff".equals(col(r, 8)) ? "staff" : "sales", col(r, 9)));
             }
             return out;
         }
     }
 
-    private SupplierPayment addSupplierPayment(String supplierId, String refillId, String kind, double amount, String staff, String note) {
+    private SupplierPayment addSupplierPayment(String supplierId, String refillId, String kind, double amount, String staff, String note,
+                                               String source, String paidBy) {
         List<String[]> rows = supplierPayments.copy();
         String id = nextId(rows);
         String time = now();
-        rows.add(new String[]{id, time, supplierId, refillId, kind, money(amount), staff, note == null ? "" : note});
+        rows.add(new String[]{id, time, supplierId, refillId, kind, money(amount), staff, note == null ? "" : note, source, paidBy});
         supplierPayments.save(rows);
-        return new SupplierPayment(id, time, parseTime(time), supplierId, refillId, kind, amount, staff, note);
+        return new SupplierPayment(id, time, parseTime(time), supplierId, refillId, kind, amount, staff, note, source, paidBy);
+    }
+
+    // ---------------------------------------------------------------- staff money
+
+    List<Payback> paybacks() {
+        synchronized (lock) {
+            List<Payback> out = new ArrayList<>();
+            for (String[] r : paybacks.rows()) {
+                out.add(new Payback(col(r, 0), col(r, 1), parseTime(col(r, 1)), col(r, 2), num(col(r, 3), 0), col(r, 4), col(r, 5)));
+            }
+            return out;
+        }
+    }
+
+    /** What the store still owes each staff member who paid suppliers from their own pocket. */
+    Map<String, Double> owedToStaff() {
+        synchronized (lock) {
+            Map<String, Double> owed = new TreeMap<>();
+            for (SupplierPayment sp : supplierPayments()) if (sp.fromStaff()) owed.merge(sp.paidBy(), sp.amount(), Double::sum);
+            for (Payback p : paybacks()) owed.merge(p.staff(), -p.amount(), Double::sum);
+            owed.replaceAll((k, v) -> round(v));
+            return owed;
+        }
+    }
+
+    /** Records the store paying a staff member back (from sales money). */
+    Payback payBackStaff(String staffName, double amount, String recordedBy, String note) {
+        synchronized (lock) {
+            double owed = owedToStaff().getOrDefault(staffName, 0.0);
+            if (owed <= 0) throw new Conflict("Nothing is owed to " + staffName + ".");
+            if (amount > owed + 0.005) throw new Conflict("That's more than the ₱" + money(owed) + " owed to " + staffName + ".");
+            List<String[]> rows = paybacks.copy();
+            String id = nextId(rows);
+            String time = now();
+            rows.add(new String[]{id, time, staffName, money(amount), recordedBy, note});
+            paybacks.save(rows);
+            return new Payback(id, time, parseTime(time), staffName, amount, recordedBy, note);
+        }
     }
 
     // ---------------------------------------------------------------- web users
