@@ -298,3 +298,11 @@ dialog.modal .row-end { flex-wrap: wrap; }
 .pay-source legend { padding: 0 4px; font-size: 13px; font-weight: 600; color: var(--ink-2); }
 .pay-source .cost-line { margin: 0 0 6px; }
 .dash-switch { max-width: 360px; }
+
+/* Supplier history dialog */
+.history-filters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 12px; }
+.history-totals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 12px; padding: 12px 0; border-top: 1px solid var(--grid); border-bottom: 1px solid var(--grid); }
+.history-totals .num { font-size: 18px; font-weight: 600; }
+.history-split { grid-column: 1 / -1; }
+.history .moves { max-height: min(50vh, 420px); overflow: auto; }
+@media (max-width: 520px) { .history-filters { grid-template-columns: 1fr 1fr; } .history-filters .field:last-child { grid-column: 1 / -1; } }

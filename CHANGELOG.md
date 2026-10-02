@@ -4,6 +4,22 @@ Every update gets a new version number. It's shown in the POS (header, account m
 
 Numbering is `major.minor.patch`: **major** when the data or the way staff work changes a lot, **minor** for new features, **patch** for fixes and small changes.
 
+## 3.2.0 — 2026-10-02
+
+**Edit records (admin dashboard)**
+- A new **Edit records** card on the admin dashboard fixes mistakes in any record: receipts, sale lines, customers, products, stock changes, refiller trips, supplier payments, tank returns and more.
+- Plain column names, and customers, products and suppliers show by name. Newest first, search by name, and click a heading to sort.
+- Click a row to edit it. Customers, products and suppliers are picked from lists, dates use a date picker, and yes/no fields are Yes/No. A box shows exactly what you changed before you save.
+- Every change needs a reason and saves a full backup first (`POSSystemData/admin-backups/`). **Undo** reverses your last change.
+- Changes that would break things are refused: negative stock, more tanks returned than owed, payments above a bill, links to missing records. Only on the server Mac, never on the staff link.
+
+**Supplier history (POS)**
+- Inventory → Suppliers → **History** shows everything done with that supplier: refill trips (sent, back, still out), new tanks bought, and payments (from sales or a staff member's own money), with billed, paid and still owed. Filter by date and type.
+- Only staff with dashboard access see it.
+
+**Tanks with customers**
+- The tank-size table has a **With customers** column (tanks customers still owe). The "All sizes" row is gone.
+
 ## 3.1.0 — 2026-10-02
 
 **Daily summary**

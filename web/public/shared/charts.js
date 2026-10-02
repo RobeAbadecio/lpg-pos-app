@@ -198,19 +198,14 @@
     if (!sizes.length) { clear(container, h('div', { class: 'empty' }, 'No products yet.')); return; }
     const kg = (w) => (Number.isInteger(w) ? w.toFixed(1) : String(w)) + ' kg';
     clear(container, h('table', { class: 'size-table' },
-      h('thead', {}, h('tr', {}, ['Size', 'With load', 'Empty', 'At refiller', 'Total tanks'].map((t, i) => h('th', { class: i ? 'right' : null }, t)))),
+      h('thead', {}, h('tr', {}, ['Size', 'With load', 'Empty', 'At refiller', 'With customers', 'Total tanks'].map((t, i) => h('th', { class: i ? 'right' : null }, t)))),
       h('tbody', {}, sizes.map((s) => h('tr', {},
         h('td', {}, kg(s.weight)),
         h('td', { class: 'right num' }, count.format(s.loaded)),
         h('td', { class: 'right num' }, count.format(s.empty)),
         h('td', { class: 'right num' }, count.format(s.atRefiller)),
-        h('td', { class: 'right num' }, count.format(s.loaded + s.empty + s.atRefiller))))),
-      h('tfoot', {}, h('tr', {},
-        h('td', {}, 'All sizes'),
-        h('td', { class: 'right num' }, count.format(sizes.reduce((n, s) => n + s.loaded, 0))),
-        h('td', { class: 'right num' }, count.format(sizes.reduce((n, s) => n + s.empty, 0))),
-        h('td', { class: 'right num' }, count.format(sizes.reduce((n, s) => n + s.atRefiller, 0))),
-        h('td', { class: 'right num' }, count.format(sizes.reduce((n, s) => n + s.loaded + s.empty + s.atRefiller, 0)))))));
+        h('td', { class: 'right num' }, count.format(s.withCustomers || 0)),
+        h('td', { class: 'right num' }, count.format(s.loaded + s.empty + s.atRefiller)))))));
   }
 
   window.Charts = { columnChart, hbars, delta, sizeTable, bucketLabel, fmtDate, hideTip };

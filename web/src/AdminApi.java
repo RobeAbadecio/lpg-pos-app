@@ -55,6 +55,15 @@ final class AdminApi implements Http.Handler {
         String action = seg.length > 2 ? seg[2] : null;
         String route = r.method + " " + seg[0] + (id == null ? "" : "/:id") + (action == null ? "" : "/" + action);
         switch (route) {
+            case "GET database" -> r.json(200, Json.obj("tables", new ArrayList<>(DatabaseEditor.SCHEMAS.keySet())));
+            case "GET database/:id" -> r.json(200, store.adminRecords(id));
+            case "PUT database/:id" -> {
+                String[] fields = DatabaseEditor.fields(id);
+                String[] row = new String[fields.length];
+                for (int i = 0; i < row.length; i++) row[i] = r.form().getOrDefault("field" + i, "");
+                r.json(200, store.correctRecord(id, r.param("mode"), r.param("recordId"),
+                        r.param("revision"), row, r.param("reason"), log));
+            }
             case "GET overview" -> r.json(200, overview());
             case "GET stats" -> r.json(200, Stats.compute(store, r.query().getOrDefault("range", "30")));
             case "GET daily" -> r.json(200, Stats.daily(store, r.query().getOrDefault("date", ""), 14));

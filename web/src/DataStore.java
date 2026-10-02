@@ -185,6 +185,23 @@ final class DataStore {
 
     Path dir() { return dir; }
 
+    Map<String, Object> adminRecords(String table) throws IOException {
+        synchronized (lock) { return DatabaseEditor.read(dir, table); }
+    }
+
+    Map<String, Object> correctRecord(String table, String mode, String id, String revision,
+                                      String[] row, String reason, ActivityLog log) throws IOException {
+        synchronized (lock) {
+            DatabaseEditor.Change change = DatabaseEditor.prepare(dir, table, mode, id, revision, row, reason);
+            Table target = all.stream().filter(t -> t.path.getFileName().toString().equals(table + ".csv"))
+                    .findFirst().orElseThrow(() -> new Http.Error(404, "Unknown business table"));
+            log.add("admin", "this Mac", "Database correction requested: " + change.message() + "; backup " + change.backup());
+            target.save(change.rows());
+            log.add("admin", "this Mac", "Database correction saved: " + change.message());
+            return Json.obj("ok", true, "backup", change.backup());
+        }
+    }
+
     /** Changes whenever any business data file changes; used as an ETag so idle phones download nothing. */
     String version() {
         StringBuilder sb = new StringBuilder();

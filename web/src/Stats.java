@@ -295,7 +295,7 @@ final class Stats {
                     "supplierId", sup == null ? null : sup.id(), "supplier", sup == null ? null : sup.name()));
             totalLoaded += Math.max(0, st.loaded());
             totalEmpty += Math.max(0, st.empty());
-            int[] size = bySize.computeIfAbsent(p.weight(), k -> new int[3]);
+            int[] size = bySize.computeIfAbsent(p.weight(), k -> new int[4]);
             size[0] += Math.max(0, st.loaded());
             size[1] += Math.max(0, st.empty());
             size[2] += Math.max(0, st.atRefiller());
@@ -309,11 +309,18 @@ final class Stats {
             default -> 2;
         }).thenComparingDouble(o -> o.get("daysLeft") == null ? Double.MAX_VALUE : (Double) o.get("daysLeft")));
 
-        // Tanks per size (kg): with load, empty, at the refiller, and all of them together.
+        for (var debts : store.owedTanks().values()) {
+            for (DataStore.OwedTank debt : debts) {
+                DataStore.Product product = byId.get(debt.productId());
+                if (product != null) bySize.computeIfAbsent(product.weight(), k -> new int[4])[3] += debt.qty();
+            }
+        }
+
+        // Customer-held tanks are separate from the stock total.
         List<Object> sizes = new ArrayList<>();
         for (var e : bySize.entrySet()) {
             int[] v = e.getValue();
-            sizes.add(Json.obj("weight", e.getKey(), "loaded", v[0], "empty", v[1], "atRefiller", v[2], "total", v[0] + v[1] + v[2]));
+            sizes.add(Json.obj("weight", e.getKey(), "loaded", v[0], "empty", v[1], "atRefiller", v[2], "withCustomers", v[3], "total", v[0] + v[1] + v[2]));
         }
 
         List<Object> openRefills = new ArrayList<>();

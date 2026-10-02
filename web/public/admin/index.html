@@ -42,6 +42,21 @@
 
     <div id="stock-banner"></div>
 
+    <section class="card" aria-labelledby="database-title">
+      <div class="card-head"><div><h2 id="database-title">Edit records</h2>
+        <div class="sub">Fix mistakes in any record. A backup is saved before every change, and you can undo your last change.</div></div></div>
+      <div class="db-controls">
+        <label class="field"><span>Records</span><select class="input" id="database-table"></select></label>
+        <label class="field"><span>Search</span><input class="input" id="database-search" type="search" placeholder="Name, product, ID, date…"></label>
+        <button class="btn" type="button" id="database-reload">Reload</button>
+        <button class="btn primary" type="button" id="database-add" disabled>Add record</button>
+      </div>
+      <p id="database-help" class="muted"></p>
+      <p id="database-status" class="muted" role="status">Loading records…</p>
+      <div id="database-records" class="table-wrap"></div>
+      <div id="database-pages" class="db-pages"></div>
+    </section>
+
     <div class="layout">
       <!-- Sales analytics -->
       <div class="main">

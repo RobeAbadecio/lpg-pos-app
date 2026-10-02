@@ -198,6 +198,12 @@ final class PosApi implements Http.Handler {
                 log.add(who, ip, "Deleted supplier " + sup.name());
                 r.json(200, Json.obj("ok", true));
             }
+            case "GET suppliers/:id/history" -> {
+                requireDashboard(who);
+                DataStore.Supplier sup = store.supplier(id);
+                if (sup == null) throw new Http.Error(404, "Supplier not found");
+                r.json(200, supplierHistory(sup));
+            }
             case "POST suppliers/:id/pay" -> {
                 DataStore.Supplier sup = store.supplier(id);
                 if (sup == null) throw new Http.Error(404, "Supplier not found");
@@ -333,6 +339,55 @@ final class PosApi implements Http.Handler {
         if (s == null) throw new Http.Error(404, "Supplier not found");
         log.add(who, ip, (id == null ? "Added supplier " : "Edited supplier ") + s.name() + " (" + String.join(", ", s.brands()) + ")");
         r.json(id == null ? 201 : 200, Json.obj("id", s.id()));
+    }
+
+    /** Everything done with one supplier, newest first: refill trips, new tanks bought, and payments. Read-only. */
+    private Map<String, Object> supplierHistory(DataStore.Supplier sup) {
+        Map<String, DataStore.Product> prods = store.productMap();
+        Function<String, String> productName = pid -> {
+            DataStore.Product p = prods.get(pid);
+            return p == null ? "Deleted product #" + pid : p.label();
+        };
+        Map<String, DataStore.Bill> bills = new HashMap<>();
+        for (DataStore.Bill b : store.bills()) if (b.supplierId().equals(sup.id())) bills.put(b.key(), b);
+        Map<String, DataStore.Movement> moves = new HashMap<>();
+        for (DataStore.Movement m : store.movements()) moves.put(m.id(), m);
+        List<Map<String, Object>> entries = new ArrayList<>();
+        for (DataStore.Refill rf : store.refills()) {
+            if (!rf.supplierId().equals(sup.id())) continue;
+            DataStore.Bill b = bills.get(rf.id());
+            List<Object> items = new ArrayList<>();
+            for (DataStore.RefillItem i : store.refillItems(rf.id())) {
+                items.add(Json.obj("product", productName.apply(i.productId()), "sent", i.sent(), "received", i.received(), "rejected", i.rejected()));
+            }
+            entries.add(Json.obj("kind", "refill", "time", rf.rawTime(), "ref", rf.id(), "label", "Refill trip #" + rf.id(),
+                    "staff", rf.staff(), "note", rf.note(), "items", items,
+                    "cost", b == null ? 0 : b.cost(), "paid", b == null ? 0 : b.paid(), "owed", b == null ? 0 : b.owed()));
+        }
+        for (DataStore.Bill b : bills.values()) {
+            if (!"purchase".equals(b.kind())) continue;
+            DataStore.Movement m = moves.get(b.key().substring(1));
+            entries.add(Json.obj("kind", "purchase", "time", b.rawTime(), "ref", b.key(), "label", b.label(),
+                    "staff", m == null ? "" : m.staff(), "note", m == null ? "" : m.note(),
+                    "cost", b.cost(), "paid", b.paid(), "owed", b.owed()));
+        }
+        double paidSales = 0, paidStaff = 0;
+        for (DataStore.SupplierPayment sp : store.supplierPayments()) {
+            if (!sp.supplierId().equals(sup.id())) continue;
+            if (sp.fromStaff()) paidStaff += sp.amount(); else paidSales += sp.amount();
+            DataStore.Bill b = sp.refillId().isEmpty() ? null : bills.get(sp.refillId());
+            String forWhat = b != null ? b.label() : sp.refillId().isEmpty() ? "New tanks (older payment)" : sp.refillId().startsWith("P") ? "New tanks" : "Refill trip #" + sp.refillId();
+            entries.add(Json.obj("kind", "payment", "time", sp.rawTime(), "ref", sp.id(), "label", forWhat,
+                    "amount", sp.amount(), "source", sp.source(), "paidBy", sp.paidBy(), "staff", sp.staff(), "note", sp.note()));
+        }
+        // Newest first; same-time entries keep bills before their payments.
+        entries.sort(Comparator.comparing((Map<String, Object> e) -> (String) e.get("time")).reversed());
+        double billed = 0, owed = 0;
+        for (DataStore.Bill b : bills.values()) { billed += b.cost(); owed += b.owed(); }
+        return Json.obj("supplier", Json.obj("id", sup.id(), "name", sup.name(), "contact", sup.contact(), "brands", sup.brands()),
+                "totals", Json.obj("billed", DataStore.round(billed), "paid", DataStore.round(paidSales + paidStaff),
+                        "paidSales", DataStore.round(paidSales), "paidStaff", DataStore.round(paidStaff), "owed", DataStore.round(owed)),
+                "entries", entries);
     }
 
     private void requireDashboard(String who) {

@@ -337,6 +337,272 @@
     request('DELETE', '/api/users/' + encodeURIComponent(username)).then(loadOverview).then(() => toast('Account deleted')).catch((e) => toast(e.message, true));
   }
 
+  // Business records are loaded on demand, never replaced by background refreshes.
+  // Raw CSV columns get plain names, readable lookups (customer/product/supplier names) and typed inputs.
+  const database = { data: null, page: 0, loading: false, sort: null, names: {}, last: null };
+  const PAGE = 25;
+  const TABLES = {
+    Receipts: ['Receipts', 'One row per sale: customer, discount and money paid at the sale. The items are in Sale lines.'],
+    Transactions: ['Sale lines', 'Each item sold on a receipt: product, quantity, price, empty tank brought back.'],
+    Payments: ['Customer payments', 'Money customers paid later for a receipt.'],
+    Customers: ['Customers', 'People who buy LPG.'],
+    LPGs: ['Products', 'Each LPG brand and size with its prices and costs.'],
+    StockMovements: ['Stock changes', 'Every change to tank counts: deliveries, counts, refiller trips, write-offs. Stock is calculated from these and from sales.'],
+    TankReturns: ['Tank returns', 'Empty tanks customers brought back for tanks they owed. Delete one to undo a collection.'],
+    Suppliers: ['Suppliers', 'Refillers, one brand each.'],
+    Refills: ['Refiller trips', 'Each trip of empties sent to a refiller. The tanks are in Stock changes.'],
+    SupplierPayments: ['Supplier payments', 'Money paid to refillers and for new tanks.'],
+    StaffPaybacks: ['Staff paybacks', 'Money the store gave back to staff who paid suppliers from their own pocket.'],
+  };
+  const MOVE_TYPES = { delivery: 'Delivery', purchase: 'Bought new tanks', count: 'Stock count', damaged: 'Write-off', other: 'Adjustment',
+    condition: 'Tank condition', 'refill-send': 'Sent to refiller', 'refill-receive': 'Back from refiller', 'refill-reject': 'Returned unfilled' };
+  // kind: text | long | money | int | signed | datetime | yesno | ref | choice | staff
+  const FIELDS = {
+    id: ['ID', 'text'], dateTime: ['Date & time', 'datetime'],
+    customerId: ['Customer', 'ref', { ref: 'Customers' }], lpgId: ['Product', 'ref', { ref: 'LPGs' }],
+    emptyLpgId: ['Empty brought back', 'ref', { ref: 'LPGs', optional: 'None — customer owes the tank', hint: 'The brand of empty tank the customer gave.' }],
+    supplierId: ['Supplier', 'ref', { ref: 'Suppliers' }],
+    receiptId: ['Receipt #', 'text', { hint: 'Blank on sales made before receipts existed.' }],
+    refillId: ['Refiller trip #', 'text', { hint: 'Blank unless this is part of a refiller trip.' }],
+    qty: ['Quantity', 'int'], unitPrice: ['Price each (₱)', 'money'], staff: ['Staff', 'staff'],
+    returnedEmpty: ['Empty returned', 'yesno'], remark: ['Remark', 'long'], owesTank: ['Customer owes the tank', 'yesno'],
+    swapFee: ['Swap fee (₱)', 'money'], firstName: ['First name', 'text'], lastName: ['Last name', 'text'],
+    contactNo: ['Contact no.', 'text'], address: ['Address', 'long'], brand: ['Brand', 'text'],
+    price: ['Refill price (₱)', 'money'], weight: ['Size (kg)', 'money'], reorderLevel: ['Reorder at (tanks)', 'int'],
+    tankPrice: ['New-tank price (₱)', 'money'], refillCost: ['Refill cost (₱)', 'money'], tankCost: ['New-tank cost (₱)', 'money'],
+    discount: ['Discount (₱)', 'money'], paidAtSale: ['Paid at sale (₱)', 'money'], note: ['Note', 'long'], amount: ['Amount (₱)', 'money'],
+    type: ['Type', 'choice', { options: MOVE_TYPES }],
+    loadedDelta: ['With load (+/−)', 'signed'], emptyDelta: ['Empty (+/−)', 'signed'], damagedDelta: ['Damaged (+/−)', 'signed'],
+    refillerDelta: ['At refiller (+/−)', 'signed'], unitCost: ['Cost each (₱)', 'money'],
+    name: ['Name', 'text'], contact: ['Contact', 'text'],
+    kind: ['For', 'choice', { options: { refill: 'Refill trip', purchase: 'New tanks' } }],
+    source: ['Paid from', 'choice', { options: { sales: 'Sales money', staff: 'Staff’s own money' }, optional: 'Sales money (older record)' }],
+    paidBy: ['Staff who paid', 'staff', { hint: 'Only when paid from staff’s own money.' }], recordedBy: ['Recorded by', 'staff'],
+  };
+  const OVERRIDES = {
+    'SupplierPayments.refillId': ['Bill', 'text', { hint: 'Refiller trip # or P + the stock change # of new tanks bought.' }],
+    'Payments.receiptId': ['Receipt #', 'text'],
+    'StaffPaybacks.staff': ['Paid back to', 'staff'],
+  };
+  const meta = (table, name) => {
+    const [label, kind, opts] = OVERRIDES[table + '.' + name] || FIELDS[name] || [name, 'text'];
+    return { name, label, kind, ...(opts || {}) };
+  };
+  const tableLabel = (t) => (TABLES[t] || [t])[0];
+  const NAME_OF = {
+    Customers: (r) => `${r[1]} ${r[2]}`.trim(),
+    LPGs: (r) => `${r[1]} ${isNaN(r[3]) ? r[3] : Number(r[3])} kg`,
+    Suppliers: (r) => r[1],
+  };
+  const pad = (n) => String(n).padStart(2, '0');
+  const nowText = () => { const d = new Date(); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`; };
+  // How a stored value reads in the table and in change summaries.
+  function shown(m, v) {
+    if (v == null || v === '') return m.kind === 'ref' && m.optional ? 'None' : '';
+    if (m.kind === 'ref') { const n = (database.names[m.ref] || {})[v]; return n ? `${n} (#${v})` : `#${v} (missing)`; }
+    if (m.kind === 'yesno') return v === '1' ? 'Yes' : v === '0' ? 'No' : v;
+    if (m.kind === 'choice') return m.options[v] || v;
+    if (m.kind === 'money' && v !== '' && !isNaN(v)) return count.format(Number(v));
+    if (m.kind === 'signed' && Number(v) > 0) return '+' + v;
+    return v;
+  }
+
+  clear($('database-table'), Object.entries(TABLES).map(([value, [label]]) => h('option', { value }, label)));
+  try { const t = localStorage.getItem('lpg-admin-table'); if (TABLES[t]) $('database-table').value = t; } catch (_) { /* storage blocked */ }
+
+  async function loadDatabase() {
+    if (database.loading) return;
+    database.loading = true;
+    const table = $('database-table').value;
+    $('database-add').disabled = true;
+    $('database-help').textContent = TABLES[table][1];
+    clear($('database-status'), 'Loading records…');
+    try {
+      // The three lookup tables turn IDs into names.
+      const [data, ...lookups] = await Promise.all([table, 'Customers', 'LPGs', 'Suppliers']
+        .map((t) => request('GET', '/api/database/' + encodeURIComponent(t))));
+      if ($('database-table').value !== table) return;
+      database.names = {};
+      for (const l of lookups) database.names[l.table] = Object.fromEntries(l.rows.map((r) => [r[0], NAME_OF[l.table](r)]));
+      if (!database.data || database.data.table !== table) {
+        database.page = 0;
+        database.sort = { col: data.fields.indexOf('dateTime') >= 0 ? data.fields.indexOf('dateTime') : 0, desc: true };
+      }
+      database.data = data;
+      renderDatabase();
+    } catch (e) {
+      database.data = null;
+      clear($('database-records')); clear($('database-pages'));
+      clear($('database-status'), e.message);
+    } finally { database.loading = false; }
+  }
+
+  function renderDatabase() {
+    const data = database.data;
+    if (!data) return;
+    const metas = data.fields.map((f) => meta(data.table, f));
+    const query = $('database-search').value.toLowerCase().trim();
+    const rows = data.rows.filter((row) => !query || row.some((v, i) => `${v} ${metas[i] ? shown(metas[i], v) : ''}`.toLowerCase().includes(query)));
+    const { col, desc } = database.sort;
+    const num = (v) => v !== '' && !isNaN(v);
+    rows.sort((a, b) => {
+      const x = a[col] || '', y = b[col] || '';
+      const c = num(x) && num(y) ? x - y : String(x).localeCompare(String(y));
+      return desc ? -c : c;
+    });
+    const pages = Math.max(1, Math.ceil(rows.length / PAGE));
+    database.page = Math.min(database.page, pages - 1);
+    const first = database.page * PAGE;
+    $('database-add').disabled = false;
+    if (!database.last) clear($('database-status'), rows.length
+      ? `Showing ${first + 1}–${Math.min(first + PAGE, rows.length)} of ${rows.length}${query ? ` matching (${data.rows.length} in all)` : ''}. Click a row to edit it.`
+      : '');
+    const sortBy = (i) => { database.sort = { col: i, desc: database.sort.col === i ? !database.sort.desc : i === 0 || metas[i].kind === 'datetime' }; renderDatabase(); };
+    clear($('database-records'), rows.length ? h('table', { class: 'db-table' },
+      h('thead', {}, h('tr', {}, metas.map((m, i) => h('th', { title: m.name, 'aria-sort': col === i ? (desc ? 'descending' : 'ascending') : null },
+        h('button', { type: 'button', class: 'th-sort', onclick: () => sortBy(i) }, m.label, col === i ? (desc ? ' ↓' : ' ↑') : ''))), h('th', {}, ''))),
+      h('tbody', {}, rows.slice(first, first + PAGE).map((row) => h('tr', { class: 'clickable', onclick: () => editDatabase('edit', row) },
+        metas.map((m, i) => h('td', { class: ['money', 'int', 'signed'].includes(m.kind) ? 'right num' : m.kind === 'datetime' || i === 0 ? 'nowrap' : m.kind === 'ref' ? 'ref' : null }, shown(m, row[i] || ''))),
+        h('td', { class: 'nowrap' },
+          h('button', { type: 'button', class: 'btn small', onclick: (e) => { e.stopPropagation(); editDatabase('edit', row); } }, 'Edit'), ' ',
+          h('button', { type: 'button', class: 'btn small danger', onclick: (e) => { e.stopPropagation(); editDatabase('delete', row); } }, 'Delete'))))))
+      : h('div', { class: 'empty' }, query ? 'No records match your search.' : 'This table is empty.'));
+    clear($('database-pages'), pages > 1 ? [
+      h('button', { type: 'button', class: 'btn small', disabled: database.page === 0, onclick: () => { database.page--; renderDatabase(); } }, '‹ Newer'),
+      h('span', { class: 'muted' }, `Page ${database.page + 1} of ${pages}`),
+      h('button', { type: 'button', class: 'btn small', disabled: database.page >= pages - 1, onclick: () => { database.page++; renderDatabase(); } }, 'Older ›')] : null);
+  }
+
+  // One typed input per column. get() returns the stored CSV text.
+  function fieldInput(m, value, locked) {
+    let el, get = () => el.value;
+    const select = (pairs) => h('select', { class: 'input' }, pairs.map(([v, label]) => h('option', { value: v }, label)));
+    if (locked) el = h('input', { class: 'input', readonly: true });
+    else if (m.kind === 'ref' || m.kind === 'choice') {
+      const pairs = Object.entries(m.kind === 'ref' ? database.names[m.ref] || {} : m.options).map(([v, n]) => [v, m.kind === 'ref' ? `${n} (#${v})` : n]);
+      if (m.kind === 'ref') pairs.sort((a, b) => a[1].localeCompare(b[1]));
+      if (m.optional) pairs.unshift(['', m.optional]);
+      if (value !== '' && !pairs.some(([v]) => v === value)) pairs.push([value, m.kind === 'ref' ? `#${value} (missing)` : value]);
+      if (value === '' && !m.optional) pairs.unshift(['', '— choose —']);
+      el = select(pairs);
+    } else if (m.kind === 'yesno') {
+      el = select([...(value === '' ? [['', '— not set (older record)']] : []), ['1', 'Yes'], ['0', 'No']]);
+    } else if (m.kind === 'datetime') {
+      el = h('input', { class: 'input', type: 'datetime-local', step: 1 });
+      get = () => { const v = el.value.replace('T', ' '); return v.length === 16 ? v + ':00' : v; };
+      el.value = value.replace(' ', 'T');
+      return { el, get };
+    } else if (['money', 'int', 'signed'].includes(m.kind)) {
+      el = h('input', { class: 'input num', type: 'number', step: m.kind === 'money' ? 'any' : 1, min: m.kind === 'signed' ? null : 0, inputmode: m.kind === 'signed' ? null : 'decimal' });
+    } else if (m.kind === 'staff') {
+      el = h('input', { class: 'input', list: 'db-staff', autocomplete: 'off' });
+    } else if (m.kind === 'long') {
+      el = h('textarea', { class: 'input', rows: 2, maxlength: 4000 });
+    } else el = h('input', { class: 'input', maxlength: 4000 });
+    el.value = value;
+    return { el, get };
+  }
+
+  async function editDatabase(mode, row = []) {
+    const data = database.data;
+    if (!data) return;
+    const metas = data.fields.map((f) => meta(data.table, f));
+    const removing = mode === 'delete', adding = mode === 'add';
+    if (adding) {
+      const ids = data.rows.map((r) => Number(r[0])).filter(Number.isFinite);
+      row = data.fields.map((f) => f === 'id' ? String(ids.length ? Math.max(...ids) + 1 : 1) : f === 'dateTime' ? nowText() : '');
+    }
+    const inputs = metas.map((m, i) => fieldInput(m, row[i] || '', i === 0 && !adding));
+    const values = () => inputs.map((x) => x.get());
+    const changes = h('div', { class: 'db-changes', 'aria-live': 'polite' });
+    const diff = () => metas.map((m, i) => [m, row[i] || '', values()[i]]).filter(([, a, b]) => a !== b);
+    const showChanges = () => {
+      if (adding || removing) return;
+      const d = diff();
+      clear(changes, d.length ? [h('strong', {}, d.length === 1 ? '1 change' : `${d.length} changes`),
+        h('ul', {}, d.map(([m, a, b]) => h('li', {}, `${m.label}: `, h('s', {}, shown(m, a) || 'blank'), ' → ', h('b', {}, shown(m, b) || 'blank'))))]
+        : h('span', { class: 'muted' }, 'No changes yet.'));
+    };
+    const reason = h('input', { class: 'input', maxlength: 200, placeholder: removing ? 'e.g. Entered twice by mistake' : 'e.g. Wrong quantity typed' });
+    const staffList = h('datalist', { id: 'db-staff' }, ((state.overview && state.overview.users) || []).map((u) => h('option', { value: u.username })));
+    const body = h('div', {},
+      staffList,
+      removing
+        ? h('dl', { class: 'db-view' }, metas.flatMap((m, i) => [h('dt', {}, m.label), h('dd', {}, shown(m, row[i] || '') || '—')]))
+        : h('div', { class: 'db-edit-fields' }, metas.map((m, i) => h('label', { class: 'field' + (m.kind === 'long' ? ' wide' : '') },
+          h('span', {}, m.label), inputs[i].el, m.hint ? h('small', { class: 'muted' }, m.hint) : null))),
+      changes,
+      h('label', { class: 'field' }, h('span', {}, 'Why are you making this change?'), reason));
+    body.addEventListener('input', showChanges);
+    body.addEventListener('change', showChanges);
+    showChanges();
+    const what = `${tableLabel(data.table)}${row[0] ? ' #' + row[0] : ''}`;
+    const result = await UI.openDialog({
+      title: `${removing ? 'Delete' : adding ? 'Add to' : 'Edit'} ${what}`,
+      message: removing ? 'This removes the record. Balances and stock are recalculated. A backup is saved first, and you can undo it afterwards.'
+        : adding ? 'A backup is saved first. Linked balances and stock update automatically.'
+        : 'Change what’s wrong. The ID can’t change. A backup is saved first, and you can undo it afterwards.',
+      wide: true, danger: removing, submit: removing ? 'Delete record' : adding ? 'Add record' : 'Save changes',
+      body,
+      onSubmit: async () => {
+        if (mode === 'edit' && !diff().length) throw new Error('Nothing has changed.');
+        if (!reason.value.trim()) { reason.focus(); throw new Error('Say why you’re making this change. It’s kept with the backup.'); }
+        const after = removing ? null : values();
+        const saved = await saveRecord(data.table, mode, row[0] || '', after, reason.value.trim(), data.revision);
+        return { ...saved, before: adding ? null : row, after };
+      },
+    });
+    if (result) {
+      database.last = { table: data.table, mode, before: result.before, after: result.after, reason: reason.value.trim(), backup: result.backup };
+      await afterSave(`${removing ? 'Deleted' : adding ? 'Added' : 'Saved'} ${what}.`);
+    }
+  }
+
+  function saveRecord(table, mode, recordId, row, reason, revision) {
+    const payload = { mode, recordId, revision, reason };
+    (row || []).forEach((v, i) => { payload['field' + i] = v; });
+    return request('PUT', '/api/database/' + encodeURIComponent(table), payload);
+  }
+
+  async function afterSave(message) {
+    const last = database.last;
+    await loadDatabase();
+    loadOverview(); loadStats(); daily.refresh();
+    clear($('database-status'), h('span', { class: 'db-saved' }, '✓ ', message), ' ',
+      last ? h('button', { type: 'button', class: 'btn small', onclick: undoLast }, 'Undo') : null,
+      h('small', { class: 'muted db-backup', title: last && last.backup }, ' Backup saved.'));
+    toast(message);
+  }
+
+  // Undo = the opposite correction, checked by the server like any other (it refuses if records changed since).
+  async function undoLast() {
+    const last = database.last;
+    if (!last) return;
+    if (!(await confirmDialog('Undo this change?', `This reverses your last change to ${tableLabel(last.table)} and saves another backup first.`, 'Undo'))) return;
+    try {
+      const fresh = await request('GET', '/api/database/' + encodeURIComponent(last.table));
+      const id = (last.after || last.before)[0];
+      if (last.mode === 'add') await saveRecord(last.table, 'delete', id, null, 'Undo: ' + last.reason, fresh.revision);
+      else if (last.mode === 'delete') await saveRecord(last.table, 'add', '', last.before, 'Undo: ' + last.reason, fresh.revision);
+      else await saveRecord(last.table, 'edit', id, last.before, 'Undo: ' + last.reason, fresh.revision);
+      database.last = null;
+      $('database-table').value = last.table;
+      await afterSave('Change undone.');
+    } catch (e) { toast(e.message, true); }
+  }
+
+  $('database-reload').addEventListener('click', () => { database.last = null; loadDatabase(); });
+  $('database-add').addEventListener('click', () => editDatabase('add'));
+  $('database-search').addEventListener('input', () => { database.page = 0; database.last = null; renderDatabase(); });
+  $('database-table').addEventListener('change', () => {
+    try { localStorage.setItem('lpg-admin-table', $('database-table').value); } catch (_) { /* storage blocked */ }
+    database.data = null; database.last = null;
+    $('database-search').value = '';
+    clear($('database-records')); clear($('database-pages'));
+    loadDatabase();
+  });
+  loadDatabase();
+
   // ------------------------------------------------------------------ stats
 
   for (const chip of document.querySelectorAll('[data-range]')) {

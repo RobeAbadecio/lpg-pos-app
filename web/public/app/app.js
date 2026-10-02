@@ -884,6 +884,13 @@
       s.empty += Math.max(0, p.empty);
       s.atRefiller += Math.max(0, p.atRefiller);
     }
+    for (const customer of state.data.customers) {
+      for (const owed of customer.owedTanks || []) {
+        const product = byId(state.data.products, owed.productId);
+        const size = product && sizes.find((s) => s.weight === product.weight);
+        if (size) size.withCustomers = (size.withCustomers || 0) + owed.qty;
+      }
+    }
     Charts.sizeTable($('size-totals'), sizes);
     renderStaffMoney();
 
@@ -953,6 +960,7 @@
           s.owed > 0 ? h('div', { class: 'meta owes-text' }, `Owes ${peso.format(s.owed)} (${plural(s.bills.length, 'bill')})`) : null),
         actions(
           s.owed > 0 ? h('button', { class: 'btn small', onclick: () => paySupplierDialog(s) }, 'Pay') : null,
+          state.me && state.me.dashboard ? h('button', { class: 'btn small ghost', onclick: () => supplierHistoryDialog(s) }, 'History') : null,
           h('button', { class: 'btn small ghost', onclick: () => supplierDialog(s) }, 'Edit'),
           h('button', { class: 'btn small ghost danger', onclick: () => deleteSupplier(s) }, 'Delete'))))) : h('div', { class: 'empty' }, 'No suppliers yet. Add who refills each brand.'));
 
@@ -1159,6 +1167,62 @@
     });
   }
 
+  // Read-only record of everything done with a supplier (staff with dashboard access only).
+  async function supplierHistoryDialog(s) {
+    let data;
+    try {
+      data = await api('GET', `/api/suppliers/${encodeURIComponent(s.id)}/history`);
+    } catch (e) {
+      if (e.status === 403) { state.me.dashboard = false; updateDashboardAccess(); renderInventory(); }
+      return toast(e.message, true);
+    }
+    const from = h('input', { class: 'input', type: 'date', 'aria-label': 'From date' });
+    const to = h('input', { class: 'input', type: 'date', 'aria-label': 'To date' });
+    const kind = h('select', { class: 'input', 'aria-label': 'Show' },
+      [['', 'Everything'], ['refill', 'Refill trips'], ['purchase', 'New tanks bought'], ['payment', 'Payments']].map(([value, label]) => h('option', { value }, label)));
+    const totals = h('div', { class: 'history-totals' });
+    const list = h('div', { class: 'moves' });
+    const money = (label, value, cls) => h('div', {}, h('small', { class: 'muted' }, label), h('div', { class: 'num ' + (cls || '') }, peso.format(value)));
+    const payer = (e) => e.source === 'staff' ? `${e.paidBy || 'staff'}’s own money` : 'from sales';
+    const billLine = (e) => e.cost ? h('div', { class: 'meta' }, `Bill ${peso.format(e.cost)} · paid ${peso.format(e.paid)}`,
+      e.owed > 0 ? h('span', { class: 'owes-text' }, ` · ${peso.format(e.owed)} still to pay`) : null) : null;
+    const draw = () => {
+      const shown = data.entries.filter((e) => (!kind.value || e.kind === kind.value)
+        && (!from.value || e.time.slice(0, 10) >= from.value) && (!to.value || e.time.slice(0, 10) <= to.value));
+      const sum = (k, f) => shown.filter(f).reduce((n, e) => n + (e[k] || 0), 0);
+      const t = data.totals;
+      const filtered = from.value || to.value || kind.value;
+      clear(totals,
+        money('Billed', filtered ? sum('cost', (e) => e.kind !== 'payment') : t.billed),
+        money('Paid', filtered ? sum('amount', (e) => e.kind === 'payment') : t.paid),
+        money('Still owed', filtered ? sum('owed', (e) => e.kind !== 'payment') : t.owed, t.owed > 0 && !filtered ? 'owes-text' : ''),
+        filtered ? null : h('small', { class: 'muted history-split' },
+          `Paid ${peso.format(t.paidSales)} from sales${t.paidStaff ? ` · ${peso.format(t.paidStaff)} from staff’s own money` : ''}`));
+      clear(list, shown.length ? shown.map((e) => h('div', { class: 'move' },
+        h('div', {}, h('strong', {}, e.kind === 'payment' ? 'Payment' : e.kind === 'purchase' ? 'Bought new tanks' : e.label),
+          e.kind === 'payment' ? ` · for ${e.label}` : e.kind === 'purchase' ? ` · ${e.label}` : null),
+        h('div', { class: 'num' }, e.kind === 'payment' ? peso.format(e.amount) : e.cost ? peso.format(e.cost) : ''),
+        e.kind === 'refill' && e.items.length ? h('div', { class: 'meta' }, e.items.map((i) =>
+          `${i.product}: ${i.sent} sent, ${i.received} back with load${i.rejected ? `, ${i.rejected} returned unfilled` : ''}${i.sent - i.received - i.rejected > 0 ? `, ${i.sent - i.received - i.rejected} still out` : ''}`).join(' · ')) : null,
+        e.kind !== 'payment' ? billLine(e) : null,
+        h('div', { class: 'meta' }, [fmtTime(e.time), e.kind === 'payment' ? payer(e) : null, e.staff ? `by ${e.staff}` : null, e.note].filter(Boolean).join(' · '))))
+        : h('div', { class: 'empty' }, filtered ? 'Nothing in this period.' : 'Nothing recorded with this supplier yet.'));
+    };
+    for (const el of [from, to, kind]) el.addEventListener('input', draw);
+    draw();
+    return openDialog({
+      title: `${data.supplier.name} — history`,
+      message: [data.supplier.contact, data.supplier.brands.join(', ')].filter(Boolean).join(' · ') || null,
+      wide: true, submit: null, cancel: 'Close',
+      body: h('div', { class: 'history' },
+        h('div', { class: 'history-filters' },
+          h('label', { class: 'field' }, h('span', {}, 'From'), from),
+          h('label', { class: 'field' }, h('span', {}, 'To'), to),
+          h('label', { class: 'field' }, h('span', {}, 'Show'), kind)),
+        totals, list),
+    });
+  }
+
   // Staff who paid suppliers from their own pocket, and paying them back.
   function renderStaffMoney() {
     const m = state.data.staffMoney;
@@ -1312,7 +1376,19 @@
       : s.uncosted.length ? `Leaves out ${s.uncosted.join(', ')} (no refill cost)` : `${t.costedRevenue ? Math.round(t.profit / t.costedRevenue * 100) : 0}% of sales`;
     Charts.hbars($('d-products'), s.byProduct, (r) => `${count.format(r.qty)} tank${r.qty === 1 ? '' : 's'}`, 'No sales in this period.');
     $('d-size-sub').textContent = `${count.format(inv.totalTanks)} tanks in all`;
-    Charts.sizeTable($('d-sizes'), inv.bySize);
+    // Older running servers omit withCustomers; derive it from the customer ledger.
+    const dashboardSizes = inv.bySize.map((size) => {
+      if (size.withCustomers != null) return size;
+      let withCustomers = 0;
+      for (const customer of state.data.customers) {
+        for (const owed of customer.owedTanks || []) {
+          const product = byId(state.data.products, owed.productId);
+          if (product && product.weight === size.weight) withCustomers += owed.qty;
+        }
+      }
+      return { ...size, withCustomers };
+    });
+    Charts.sizeTable($('d-sizes'), dashboardSizes);
     const sm = d.staffMoney;
     $('d-staff-sub').textContent = sm.total > 0 ? `${peso.format(sm.total)} to pay back` : 'Nobody is owed anything';
     clear($('d-staff'), sm.owed.length ? sm.owed.map((o) => h('div', { class: 'owe-row' }, h('span', {}, o.staff), h('strong', { class: 'num' }, peso.format(o.owed))))
