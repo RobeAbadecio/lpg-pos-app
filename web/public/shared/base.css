@@ -1,19 +1,20 @@
 /* Shared tokens + components for the POS app and the admin dashboard. */
 :root {
   color-scheme: light;
-  --page: #f3f5f8;
+  --page: #f6f6f3;
   --surface: #ffffff;
-  --surface-2: #edf1f6;
-  --ink: #182538;
-  --ink-2: #455469;
-  --muted: #5e6b7b;
-  --grid: #dfe5ed;
+  --surface-2: #f2f1ec;
+  --head: #fafaf8;
+  --ink: #1f1e1b;
+  --ink-2: #45443f;
+  --muted: #6b6a64;
+  --grid: #ecebe5;
   --axis: #c3c2b7;
-  --border: rgba(11, 11, 11, 0.10);
-  --border-strong: rgba(11, 11, 11, 0.18);
-  --accent: #2167bd;
-  --accent-ink: #1857a4;
-  --accent-wash: rgba(42, 120, 214, 0.10);
+  --border: #e4e3dc;
+  --border-strong: #d4d3ca;
+  --accent: #2a78d6;
+  --accent-ink: #1c5cab;
+  --accent-wash: #eaf2fc;
   --on-accent: #ffffff;
   --series-1: #2a78d6;
   --good: #0ca30c;
@@ -24,8 +25,8 @@
   --warning: #fab219;
   --warning-ink: #8a5a00;
   --shadow: none;
-  --radius: 12px;
-  --radius-sm: 8px;
+  --radius: 14px;
+  --radius-sm: 10px;
   --font: system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 
@@ -35,6 +36,7 @@
     --page: #0d0d0d;
     --surface: #1a1a19;
     --surface-2: #232321;
+    --head: #1f1f1d;
     --ink: #ffffff;
     --ink-2: #c3c2b7;
     --muted: #8f8d86;
@@ -232,3 +234,64 @@ dialog.modal::backdrop { background: rgba(0, 0, 0, .35); }
 }
 .update-actions { display: flex; gap: 6px; flex: none; }
 @media (max-width: 480px) { .update-bar { left: 12px; right: 12px; transform: none; flex-wrap: wrap; } .update-actions { margin-left: auto; } }
+
+/* ---------- 4.0 redesign: one look for the POS and the admin page ---------- */
+body { font-size: 15px; }
+.num, td.right, th.right { font-variant-numeric: tabular-nums; }
+.btn { min-height: 44px; border-color: var(--border-strong); border-radius: var(--radius-sm); font-weight: 550; }
+.btn.small { min-height: 36px; border-radius: 9px; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.primary:hover { filter: none; background: #2369be; }
+.btn.danger { color: var(--critical); }
+.btn.xl { min-height: 56px; font-size: 17px; font-weight: 650; border-radius: 12px; }
+.input { min-height: 44px; border-color: var(--border-strong); border-radius: var(--radius-sm); }
+.input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-wash); }
+.card { border: 1px solid var(--border); border-radius: var(--radius); }
+.card.flush { padding: 0; overflow: hidden; }
+.card.flush > .table-wrap { margin: 0; padding: 0; }
+.card-head .sub, .sub, .muted { color: var(--muted); }
+
+/* Tables: small grey uppercase heads, roomy rows, money on the right */
+th {
+  padding: 10px 12px; background: var(--head); color: var(--muted);
+  font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .045em; border-bottom: 1px solid var(--border);
+}
+td { padding: 12px; border-bottom: 1px solid var(--grid); }
+.card.flush th:first-child, .card.flush td:first-child { padding-left: 18px; }
+.card.flush th:last-child, .card.flush td:last-child { padding-right: 18px; }
+tbody tr:hover td { background: #fbfbf9; }
+td.actions { text-align: right; }
+
+/* Status chips: a dot and a word (green good, amber owed/low, red unpaid/out) */
+.status { gap: 6px; padding: 3px 10px; font-size: 12.5px; font-weight: 600; }
+.status .i { font-size: 0; width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none; }
+.status.ok { background: #e6f4e6; color: #17661b; }
+.status.low { background: #fdf1d8; color: #8a5a00; }
+.status.out { background: #fbe7e7; color: #b02a2a; }
+
+/* Chips (filters, sizes, quick amounts) */
+.chip { min-height: 36px; padding: 0 14px; border-radius: 999px; font-weight: 550; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.chip[aria-checked="true"] { background: var(--ink); border-color: var(--ink); color: var(--page); }
+.chip-count { font-size: 12px; color: var(--muted); font-weight: 600; }
+.chip[aria-pressed="true"] .chip-count, .chip[aria-checked="true"] .chip-count { color: inherit; opacity: .75; }
+@media (pointer: coarse) { .chip { min-height: 44px; } }
+
+/* Dialogs: title and ✕ on top, Cancel + main button bottom right, destructive far left */
+dialog.modal { border-radius: 16px; border-color: var(--border); }
+.modal form { display: block; padding: 0; }
+.modal-head { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 16px 8px 20px; background: var(--surface); }
+.modal-head h3 { font-size: 18px; font-weight: 700; }
+.modal-close { flex: none; width: 40px; height: 40px; border: 0; border-radius: 10px; background: transparent; color: var(--muted); font-size: 16px; cursor: pointer; }
+.modal-close:hover { background: var(--surface-2); color: var(--ink); }
+.modal-close:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; }
+.modal-body { display: grid; gap: 14px; padding: 4px 20px 20px; }
+.modal .modal-foot { position: sticky; bottom: 0; z-index: 2; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin: 0; padding: 14px 20px; background: var(--head); border-top: 1px solid var(--border); }
+.modal-foot > .btn.danger:first-child, .modal-foot > .btn.destructive:first-child:not(:last-child) { margin-right: auto; border-color: rgba(176, 42, 42, .35); }
+.modal .discard-bar { position: static; margin: 0 20px 14px; }
+@media (prefers-color-scheme: dark) {
+  tbody tr:hover td { background: var(--surface-2); }
+  .status.ok { background: rgba(115, 215, 128, .14); color: #73d780; }
+  .status.low { background: rgba(250, 178, 25, .16); color: #fab219; }
+  .status.out { background: rgba(255, 146, 146, .14); color: #ff9292; }
+  .btn.primary { color: #fff; }
+}

@@ -104,6 +104,12 @@
     return body;
   }
 
+  // Dialog header: the title and a close (✕) button that asks first if something was typed.
+  function modalHead(title, dismiss) {
+    return h('div', { class: 'modal-head' }, h('h3', {}, title),
+      h('button', { type: 'button', class: 'modal-close', 'aria-label': 'Close', onclick: dismiss }, '✕'));
+  }
+
   // Generic form dialog. fields: [{name, label, type, value, required, placeholder, step, min, max, full, help}]
   let dialogId = 0;
   function prepareDialog(dlg) {
@@ -137,7 +143,7 @@
       h('div', { class: 'row-end' },
         h('button', { type: 'button', class: 'btn small', onclick: () => { ask.hidden = true; (dlg.querySelector('input:not([type=hidden]), select') || dlg).focus(); } }, 'Keep editing'),
         h('button', { type: 'button', class: 'btn small destructive', onclick: () => { dirty = false; dlg.close(); } }, 'Discard')));
-    dlg.querySelector('form').append(ask);
+    (dlg.querySelector('.modal-foot') || dlg.querySelector('form')).before(ask);
     dlg.dismiss = () => {
       if (!dirty) return dlg.close();
       ask.hidden = false;
@@ -177,15 +183,16 @@
         if (f.full) { flush(); rows.push(label); } else { pair.push(label); if (pair.length === 2) flush(); }
       }
       flush();
-      const cancel = h('button', { type: 'button', class: 'btn ghost', onclick: () => dlg.dismiss() }, 'Cancel');
+      const cancel = h('button', { type: 'button', class: 'btn', onclick: () => dlg.dismiss() }, 'Cancel');
       const ok = h('button', { type: 'submit', class: danger ? 'btn destructive' : 'btn primary' }, submit);
       const form = h('form', { method: 'dialog' },
-        h('h3', {}, title),
-        message ? h('p', { class: 'msg' }, message) : null,
-        rows,
-        extra ? extra(inputs) : null,
-        err,
-        h('div', { class: 'row-end' }, cancel, ok));
+        modalHead(title, () => dlg.dismiss()),
+        h('div', { class: 'modal-body' },
+          message ? h('p', { class: 'msg' }, message) : null,
+          rows,
+          extra ? extra(inputs) : null,
+          err),
+        h('div', { class: 'modal-foot row-end' }, cancel, ok));
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
         const values = {};
@@ -221,13 +228,14 @@
       const err = h('p', { class: 'error-text', role: 'alert', hidden: true });
       const ok = submit ? h('button', { type: 'submit', class: danger ? 'btn destructive' : 'btn primary' }, submit) : null;
       const form = h('form', { method: 'dialog', novalidate: true },
-        h('h3', {}, title),
-        message ? h('p', { class: 'msg' }, message) : null,
-        typeof body === 'function' ? body(close) : body,
-        err,
-        h('div', { class: 'row-end' },
+        modalHead(title, () => dlg.dismiss()),
+        h('div', { class: 'modal-body' },
+          message ? h('p', { class: 'msg' }, message) : null,
+          typeof body === 'function' ? body(close) : body,
+          err),
+        h('div', { class: 'modal-foot row-end' },
           typeof actions === 'function' ? actions(close) : actions,
-          cancel ? h('button', { type: 'button', class: 'btn ghost', onclick: () => dlg.dismiss() }, cancel) : null,
+          cancel ? h('button', { type: 'button', class: 'btn', onclick: () => dlg.dismiss() }, cancel) : null,
           ok));
       form.addEventListener('submit', async (e) => {
         e.preventDefault();

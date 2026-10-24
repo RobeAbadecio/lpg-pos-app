@@ -10,11 +10,13 @@
   // lastCustomerId: who the items were added for, so switching customers starts a fresh receipt.
   // date: the day the receipt is for ('' = today); when editing, the receipt's own day, which can be changed.
   const newSale = () => ({ customerId: null, lastCustomerId: null, lines: [], discount: '', pay: 'full', method: 'cash', paidNow: '', cash: '', note: '', date: '', editing: null, own: {}, laterPaid: 0, fromKept: false });
-  const state = { me: null, data: EMPTY_DATA, etag: null, view: 'sell', sale: newSale(), historyFilter: 'all', dashMode: 'daily' };
+  const state = { me: null, data: EMPTY_DATA, etag: null, view: 'sell', sale: newSale(), historyFilter: 'all', customerFilter: 'all', sizeFilter: '', invTab: 'stock', dashMode: 'daily' };
   try {
     const m = localStorage.getItem('lpg-dash-mode');
     // "trends" (before 3.4) and "customers" (before 3.6) are now Sales.
     state.dashMode = ['trends', 'customers'].includes(m) ? 'sales' : ['sales', 'suppliers', 'money', 'start'].includes(m) ? m : 'daily';
+    const t = localStorage.getItem('lpg-inv-tab');
+    if (['stock', 'out', 'refiller', 'suppliers', 'staff', 'history'].includes(t)) state.invTab = t;
   } catch (_) { /* storage blocked */ }
   let lineKey = 0;
 
@@ -251,9 +253,9 @@
       body: h('ul', { class: 'help-list' },
         item('A sale', 'Receipts → open the receipt → Edit to change items, prices or payment, or Void to remove it.'),
         item('A customer payment', 'Open the receipt → Undo next to the payment.'),
-        item('A refill, or tanks received', 'Inventory → At the refiller (or Finished recently) → Undo, or Stock history → Undo next to it. Undoing tanks received puts them back at the refiller.'),
+        item('A refill, or tanks received', 'Inventory → At refiller (or Finished recently) → Undo, or Stock history → Undo next to it. Undoing tanks received puts them back at the refiller.'),
         item('New tanks bought, a stock count', 'Inventory → Stock history → Undo.'),
-        item('A tank collected from a customer', 'Inventory → Tanks not returned → Recently returned → Undo.'),
+        item('A tank collected from a customer', 'Inventory → Tanks out → Recently returned → Undo.'),
         item('A customer’s kept tanks', 'Customers → Kept tanks → Undo under “Recorded lately”.'),
         item('A supplier payment or a payback', 'Inventory → Staff money → Undo, or Suppliers → History → Undo (dashboard).'),
         item('An expense, or the wrong day', 'Dashboard → Money: correct or delete an expense. A receipt’s day can be changed when editing it (dashboard).'),
@@ -273,7 +275,6 @@
   function go(view) {
     if (!VIEWS.includes(view) || (view === 'dashboard' && !(state.me && state.me.dashboard))) view = 'sell';
     state.view = view;
-    $('view-title').textContent = { sell: 'New sale', history: 'Receipts', customers: 'Customers', products: 'Products', inventory: 'Inventory', dashboard: 'Dashboard' }[view];
     $('work-date').textContent = new Date().toLocaleDateString('en-PH', { weekday: 'short', month: 'short', day: 'numeric' });
     if (location.hash.slice(1) !== view) history.replaceState(null, '', '#' + view);
     for (const s of document.querySelectorAll('.view')) s.hidden = s.id !== 'view-' + view;
@@ -289,8 +290,30 @@
   document.addEventListener('click', (e) => {
     const t = e.target.closest('[data-view], [data-goto]');
     if (t) go(t.dataset.view || t.dataset.goto);
-    const menu = document.querySelector('.usermenu');
-    if (menu.open && !e.target.closest('.usermenu')) menu.open = false;
+    // Open menus (account, a row's ⋯) close on a tap anywhere else.
+    for (const menu of document.querySelectorAll('details.usermenu[open], details.rowmenu[open]')) {
+      if (!menu.contains(e.target)) menu.open = false;
+    }
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') for (const menu of document.querySelectorAll('details.rowmenu[open]')) { menu.open = false; menu.querySelector('summary').focus(); }
+  });
+  window.addEventListener('scroll', () => { for (const menu of document.querySelectorAll('details.rowmenu[open]')) menu.open = false; }, { passive: true });
+
+  // F1–F6 open the sections (as in the sidebar); Ctrl+Enter processes the sale. Not while a dialog is open.
+  const KEYS = { F1: 'sell', F2: 'history', F3: 'customers', F4: 'products', F5: 'inventory', F6: 'dashboard' };
+  document.addEventListener('keydown', (e) => {
+    if (!state.me || document.querySelector('dialog[open]') || e.altKey || e.metaKey) return;
+    const view = KEYS[e.key];
+    if (view && !e.ctrlKey && !e.shiftKey) {
+      e.preventDefault(); // F1 help and F5 reload would otherwise fire (and could lose a half-typed sale)
+      if (view !== 'dashboard' || state.me.dashboard) go(view);
+      return;
+    }
+    if (e.key === 'Enter' && e.ctrlKey && state.view === 'sell' && !$('process').disabled) {
+      e.preventDefault();
+      $('process').click();
+    }
   });
   // The skip link is a focus shortcut, not a section route.
   document.querySelector('.skip-link').addEventListener('click', (e) => {
@@ -378,6 +401,31 @@
     return h('div', { class: 'row-actions' }, buttons);
   }
 
+  // A row's main action as a button, and the rest (Delete last, in red) in a ⋯ menu.
+  // items: [{ label, onClick, danger }] (falsy entries are skipped).
+  function rowMenu(primary, items, label) {
+    const list = items.filter(Boolean);
+    const menu = h('details', { class: 'rowmenu' },
+      h('summary', { class: 'btn small', 'aria-label': `More actions${label ? ' for ' + label : ''}`, title: 'More actions' }, '⋯'),
+      h('div', { class: 'menu card', role: 'menu' }, list.map((it) => [
+        it.danger && list.length > 1 ? h('hr', { class: 'menu-sep' }) : null,
+        h('button', { type: 'button', role: 'menuitem', class: 'btn ghost block' + (it.danger ? ' danger' : ''),
+          onclick: (e) => { e.stopPropagation(); menu.open = false; it.onClick(); } }, it.label)])));
+    // The table scrolls sideways and would clip the menu, so it opens fixed under its button.
+    menu.addEventListener('toggle', () => {
+      if (!menu.open) return;
+      for (const other of document.querySelectorAll('details.rowmenu[open]')) if (other !== menu) other.open = false;
+      const box = menu.querySelector('.menu'), r = menu.querySelector('summary').getBoundingClientRect();
+      box.style.right = Math.max(8, window.innerWidth - r.right) + 'px';
+      const below = window.innerHeight - r.bottom;
+      if (below < box.offsetHeight + 12 && r.top > below) { box.style.top = ''; box.style.bottom = (window.innerHeight - r.top + 6) + 'px'; }
+      else { box.style.bottom = ''; box.style.top = (r.bottom + 6) + 'px'; }
+    });
+    menu.addEventListener('click', (e) => e.stopPropagation()); // not a click on the row
+    return actions(primary ? h('button', { type: 'button', class: 'btn small' + (primary.primary ? ' primary' : ''), onclick: (e) => { e.stopPropagation(); primary.onClick(); } }, primary.label) : null,
+      list.length ? menu : null);
+  }
+
   function formBody(form) {
     const body = {};
     for (const [k, v] of new FormData(form).entries()) body[k] = String(v).trim();
@@ -461,9 +509,19 @@
   const inCart = (pid, except) => state.sale.lines.filter((l) => l.productId === pid && l !== except).reduce((n, l) => n + l.qty, 0);
   const cartQty = () => state.sale.lines.reduce((n, l) => n + l.qty, 0);
 
+  // Tank-size chips over the grid: All sizes, then each size there is.
+  function renderSizeChips() {
+    const sizes = [...new Set(state.data.products.map((p) => p.weight))].sort((a, b) => a - b);
+    if (state.sizeFilter !== '' && !sizes.includes(Number(state.sizeFilter))) state.sizeFilter = '';
+    const chip = (value, label) => h('button', { type: 'button', class: 'chip', 'aria-pressed': String(state.sizeFilter === value),
+      onclick: () => { state.sizeFilter = value; renderSizeChips(); renderTiles(); } }, label);
+    clear($('size-chips'), sizes.length > 1 ? [chip('', 'All sizes'), sizes.map((w) => chip(String(w), kg(w)))] : null);
+  }
+
   function renderTiles() {
     const query = $('sell-product-search').value.trim();
-    const prods = state.data.products.filter((p) => matches(query, p.brand, p.label, kg(p.weight)));
+    const prods = state.data.products.filter((p) => matches(query, p.brand, p.label, kg(p.weight))
+      && (state.sizeFilter === '' || p.weight === Number(state.sizeFilter)));
     clear($('sell-products'), prods.length ? prods.map((p) => {
       const n = inCart(p.id);
       const left = available(p.id) - n;
@@ -475,9 +533,10 @@
       h('span', { class: 'brand-name' }, p.brand),
       h('span', { class: 'kg' }, kg(p.weight)),
       h('span', { class: 'price num' }, peso.format(p.price)),
-      h('span', { class: 'stock ' + (left <= 0 && n ? 'out' : p.status) }, n ? `${left} more with load` : stockText(p)),
+      available(p.id) <= 0 ? h('span', { class: 'status out' }, h('span', { class: 'i', 'aria-hidden': 'true' }, '✕'), 'Out of stock')
+        : h('span', { class: 'stock ' + (left <= 0 && n ? 'out' : p.status) }, n ? `${left} more with load` : stockText(p)),
       n ? h('span', { class: 'in-cart', 'aria-hidden': 'true' }, n) : null);
-    }) : h('div', { class: 'empty' }, query ? 'No matching tanks. Try a different brand or size.' : 'No LPG products yet. Add them in the Products tab.'));
+    }) : h('div', { class: 'empty' }, query || state.sizeFilter ? 'No matching tanks. Try a different brand or size.' : 'No LPG products yet. Add them in the Products tab.'));
   }
   $('sell-product-search').addEventListener('input', renderTiles);
 
@@ -647,8 +706,10 @@
     $('cart-total').textContent = peso.format(t.total);
 
     const cash = parseMoney(sale.cash);
-    $('change').textContent = sale.pay === 'full' && sale.method === 'cash' && !Number.isNaN(cash) && sale.lines.length
-      ? (cash >= t.paid ? `Change: ${peso.format(cash - t.paid)}` : `Short by ${peso.format(t.paid - cash)}`) : '';
+    const showChange = sale.pay === 'full' && sale.method === 'cash' && !Number.isNaN(cash) && sale.lines.length;
+    $('change').textContent = showChange ? (cash >= t.paid ? peso.format(cash - t.paid) : `Short ${peso.format(t.paid - cash)}`) : '—';
+    $('change').classList.toggle('short', !!showChange && cash < t.paid);
+    renderCashChips(t.paid);
 
     const c = byId(state.data.customers, sale.customerId);
     const note = $('credit-note');
@@ -661,10 +722,29 @@
     const ready = $('sale-ready');
     ready.hidden = !btn.disabled;
     ready.textContent = t.discountError || t.payError || (!c && !sale.lines.length ? 'Choose a customer and add a tank to begin.' : !c ? 'Choose a customer to finish this sale.' : 'Add a tank to this receipt.');
-    btn.textContent = sale.editing ? 'Save changes' : !c && sale.lines.length ? 'Choose a customer' : t.credit > 0 && sale.lines.length ? `Process sale · ${peso.format(t.credit)} to pay later` : 'Process sale';
+    btn.textContent = sale.editing ? (sale.lines.length ? `Save changes · ${peso.format(t.total)}` : 'Save changes')
+      : !c && sale.lines.length ? 'Choose a customer'
+      : !sale.lines.length ? 'Process sale'
+      : t.credit > 0 ? `Process sale · ${peso.format(t.total)} (${peso.format(t.credit)} later)` : `Process sale · ${peso.format(t.total)}`;
     $('edit-banner').hidden = !sale.editing;
     $('edit-id').textContent = sale.editing ? '#' + sale.editing : '';
     updateCartBar();
+  }
+
+  // Quick cash amounts: the exact amount, then the next round notes above it.
+  let cashChipsFor = null;
+  function renderCashChips(due) {
+    const key = state.sale.lines.length ? due : 0;
+    if (cashChipsFor === key) return;
+    cashChipsFor = key;
+    const amounts = [];
+    if (key > 0) for (const step of [100, 500, 1000]) {
+      const v = Math.ceil((due + 0.001) / step) * step;
+      if (v > due && !amounts.includes(v)) amounts.push(v);
+    }
+    const pick = (v) => { state.sale.cash = v.toFixed(2); $('cash').value = state.sale.cash; renderTotals(); };
+    clear($('cash-chips'), key > 0 ? [h('button', { type: 'button', class: 'chip', onclick: () => pick(due) }, 'Exact'),
+      amounts.slice(0, 3).map((v) => h('button', { type: 'button', class: 'chip num', onclick: () => pick(v) }, UI.pesoRound.format(v)))] : null);
   }
 
   function renderPayment() {
@@ -767,6 +847,7 @@
     const before = sale.lines.length;
     sale.lines = sale.lines.filter((l) => byId(state.data.products, l.productId));
     renderCustomerPick();
+    renderSizeChips();
     renderTiles();
     if (passive && sale.lines.length === before) renderTotals(); // leave the receipt being typed alone
     else renderCart();
@@ -892,11 +973,16 @@
   }
 
   function renderHistory() {
-    for (const b of document.querySelectorAll('[data-filter]')) b.setAttribute('aria-checked', String(b.dataset.filter === state.historyFilter));
     const q = $('history-search').value.trim();
-    const unpaidOnly = state.historyFilter === 'unpaid';
-    const rows = state.data.receipts.filter((r) => (!unpaidOnly || r.balance > 0)
-      && matches(q, '#' + r.id, r.customer, r.staff, r.time, itemsText(r), r.note, r.lines.map((l) => l.remark).join(' ')));
+    const found = state.data.receipts.filter((r) => matches(q, '#' + r.id, r.customer, r.staff, r.time, itemsText(r), r.note, r.lines.map((l) => l.remark).join(' ')));
+    const unpaid = found.filter((r) => r.balance > 0);
+    const counts = { all: found.length, unpaid: unpaid.length, paid: found.length - unpaid.length };
+    for (const b of document.querySelectorAll('[data-filter]')) {
+      b.setAttribute('aria-checked', String(b.dataset.filter === state.historyFilter));
+      b.querySelector('.chip-count').textContent = count.format(counts[b.dataset.filter]);
+    }
+    const filtered = state.historyFilter !== 'all';
+    const rows = state.historyFilter === 'unpaid' ? unpaid : state.historyFilter === 'paid' ? found.filter((r) => !(r.balance > 0)) : found;
     const total = rows.reduce((s, r) => s + r.total, 0);
     const owed = rows.reduce((s, r) => s + r.balance, 0);
     $('history-summary').textContent = `${plural(rows.length, 'receipt')} · ${peso.format(total)}${owed > 0 ? ` · ${peso.format(owed)} unpaid` : ''}`;
@@ -909,10 +995,18 @@
       { label: 'Total', right: true, render: (r) => peso.format(r.total), sm: 'figure' },
       { label: 'Payment', render: (r) => [payPill(r.status), r.balance > 0 ? h('div', { class: 'cell-sub' }, `${peso.format(r.balance)} to pay`) : null], sm: 'hide' },
       { label: 'Sold by', render: (r) => r.staff, cls: 'secondary', sm: 'hide' },
-      { label: '', cls: 'actions', render: (r) => actions(
-        h('button', { class: 'btn small ghost', onclick: () => showReceipt(r.id) }, 'View'),
-        r.balance > 0 ? h('button', { class: 'btn small ghost', onclick: () => paymentDialog({ receipt: r }) }, 'Record payment') : null) },
-    ], shown, q || unpaidOnly ? 'No receipts match.' : 'No receipts yet.',
+      { label: 'Actions', right: true, cls: 'actions', render: (r) => {
+        const cust = byId(state.data.customers, r.customerId);
+        return rowMenu(r.balance > 0 ? { label: 'Record payment', primary: true, onClick: () => paymentDialog({ receipt: r }) } : { label: 'View', onClick: () => showReceipt(r.id) }, [
+          { label: 'View receipt', onClick: () => showReceipt(r.id) },
+          r.balance > 0 ? { label: 'Record payment', onClick: () => paymentDialog({ receipt: r }) } : null,
+          cust && cust.tanksOwed > 0 ? { label: 'Collect tank', onClick: () => returnDialog(cust) } : null,
+          { label: 'Edit receipt', onClick: () => editReceipt(r) },
+          { label: 'Print', onClick: () => printReceipt(r) },
+          { label: 'Void receipt…', danger: true, onClick: () => voidReceipt(r) },
+        ], `receipt #${r.id}`);
+      } },
+    ], shown, q || filtered ? 'No receipts match.' : 'No receipts yet.',
     (r) => `#${r.id} · ${itemsText(r)} · ${fmtTime(r.time)} · ${r.staff} · ${owedText(r)}`,
     (r) => showReceipt(r.id)),
     moreButton('history', shown.length, rows.length, renderHistory));
@@ -922,11 +1016,27 @@
 
   $('customers-search').addEventListener('input', renderCustomers);
   $('add-customer').addEventListener('click', () => customerDialog());
+  for (const b of document.querySelectorAll('[data-cfilter]')) {
+    b.addEventListener('click', () => { state.customerFilter = b.dataset.cfilter; renderCustomers(); });
+  }
+
+  // Starts a new sale for this customer (leaves a receipt being edited alone).
+  function saleFor(c) {
+    if (state.sale.editing) return toast('Finish or cancel the receipt being edited first', true);
+    go('sell');
+    chooseCustomer(c.id);
+  }
 
   function renderCustomers() {
     const q = $('customers-search').value.trim();
     const all = state.data.customers;
-    const rows = all.filter((c) => matches(q, c.id, fullName(c), c.contact, c.address));
+    const found = all.filter((c) => matches(q, c.id, fullName(c), c.contact, c.address));
+    const pass = { all: () => true, owes: (c) => c.balance > 0, tanks: (c) => c.tanksOwed > 0 };
+    for (const b of document.querySelectorAll('[data-cfilter]')) {
+      b.setAttribute('aria-checked', String(b.dataset.cfilter === state.customerFilter));
+      b.querySelector('.chip-count').textContent = count.format(found.filter(pass[b.dataset.cfilter]).length);
+    }
+    const rows = found.filter(pass[state.customerFilter] || pass.all);
     const owing = all.filter((c) => c.balance > 0);
     const owed = owing.reduce((s, c) => s + c.balance, 0);
     const tanksOut = all.reduce((n, c) => n + c.tanksOwed, 0);
@@ -934,19 +1044,24 @@
     clear($('customers-table'), table([
       { label: '#', render: (c) => c.id, cls: 'muted num', sm: 'hide' },
       { label: 'Name', render: (c) => fullName(c), sm: 'title' },
-      { label: 'Contact', render: (c) => c.contact || '—', sm: 'hide' },
+      { label: 'Contact', render: (c) => c.contact || '—', sm: 'hide', cls: 'nowrap secondary' },
       { label: 'Address', render: (c) => c.address || '—', sm: 'hide' },
       { label: 'Last purchase', render: (c) => c.lastPurchase ? fmtTime(c.lastPurchase) : '—', sm: 'hide', cls: 'nowrap' },
-      { label: 'Tanks out', right: true, render: (c) => c.tanksOwed ? h('span', { class: 'owes-text', title: tanksText(c) }, count.format(c.tanksOwed)) : '—', sm: 'hide' },
+      { label: 'Tanks out', right: true, render: (c) => c.tanksOwed ? h('span', { class: 'status low', title: tanksText(c) }, h('span', { class: 'i', 'aria-hidden': 'true' }, '▲'), `${count.format(c.tanksOwed)} out`) : '—', sm: 'hide' },
       { label: 'We keep', right: true, render: (c) => c.keptTanks ? h('span', { title: keptText(c) }, count.format(c.keptTanks)) : '—', sm: 'hide' },
       { label: 'Balance', right: true, render: (c) => c.balance > 0 ? h('span', { class: 'owes-text' }, peso.format(c.balance)) : '—', sm: 'figure' },
-      { label: '', cls: 'actions', render: (c) => actions(
-        c.tanksOwed > 0 ? h('button', { class: 'btn small ghost', onclick: () => returnDialog(c) }, 'Collect tank') : null,
-        c.balance > 0 ? h('button', { class: 'btn small ghost', onclick: () => paymentDialog({ customer: c }) }, 'Collect payment') : null,
-        h('button', { class: 'btn small ghost', onclick: () => keptDialog(c) }, 'Kept tanks'),
-        h('button', { class: 'btn small ghost', onclick: () => customerDialog(c) }, 'Edit'),
-        h('button', { class: 'btn small ghost danger', onclick: () => deleteCustomer(c) }, 'Delete')) },
-    ], rows, q ? 'No customers match your search.' : 'No customers yet.',
+      { label: 'Actions', right: true, cls: 'actions', render: (c) => rowMenu(
+        c.balance > 0 ? { label: 'Collect payment', primary: true, onClick: () => paymentDialog({ customer: c }) }
+          : c.tanksOwed > 0 ? { label: 'Collect tank', onClick: () => returnDialog(c) }
+          : { label: 'Edit', onClick: () => customerDialog(c) }, [
+          c.balance > 0 ? { label: 'Collect payment', onClick: () => paymentDialog({ customer: c }) } : null,
+          c.tanksOwed > 0 ? { label: 'Collect tank', onClick: () => returnDialog(c) } : null,
+          { label: 'Kept tanks', onClick: () => keptDialog(c) },
+          { label: 'Edit customer', onClick: () => customerDialog(c) },
+          { label: 'Start a sale', onClick: () => saleFor(c) },
+          { label: 'Delete customer…', danger: true, onClick: () => deleteCustomer(c) },
+        ], fullName(c)) },
+    ], rows, q || state.customerFilter !== 'all' ? 'No customers match.' : 'No customers yet.',
     (c) => [c.contact, lastText(c), c.tanksOwed ? `owes ${plural(c.tanksOwed, 'tank')}` : null, c.keptTanks ? `we keep ${plural(c.keptTanks, 'tank')}` : null].filter(Boolean).join(' · ')));
   }
 
@@ -1043,7 +1158,8 @@
 
   function renderProducts() {
     const all = state.data.products;
-    $('products-summary').textContent = plural(all.length, 'product');
+    const low = all.filter((p) => p.status !== 'ok').length;
+    $('products-summary').textContent = `${plural(all.length, 'product')}${low ? ` · ${low} need${low === 1 ? 's' : ''} refilling` : ''} · price changes apply to new receipts`;
     clear($('products-table'), table([
       { label: '#', render: (p) => p.id, cls: 'muted num', sm: 'hide' },
       { label: 'Brand', render: (p) => p.brand, sm: 'title' },
@@ -1054,9 +1170,12 @@
       { label: 'Margin', right: true, render: (p) => p.refillCost ? peso.format(p.price - p.refillCost) : '—', sm: 'hide' },
       { label: 'Sold', right: true, render: (p) => count.format(p.sold), sm: 'hide' },
       { label: 'With load', right: true, render: (p) => count.format(p.loaded), sm: 'hide' },
-      { label: '', cls: 'actions', render: (p) => actions(
-        h('button', { class: 'btn small ghost', onclick: () => productDialog(p) }, 'Edit'),
-        h('button', { class: 'btn small ghost danger', onclick: () => deleteProduct(p) }, 'Delete')) },
+      { label: 'Status', render: (p) => stockPill(p), sm: 'hide' },
+      { label: 'Actions', right: true, cls: 'actions', render: (p) => rowMenu({ label: 'Edit', onClick: () => productDialog(p) }, [
+        { label: 'Edit product', onClick: () => productDialog(p) },
+        { label: 'Count stock', onClick: () => adjustDialog(p) },
+        { label: 'Delete product…', danger: true, onClick: () => deleteProduct(p) },
+      ], p.label) },
     ], all, 'No LPG products yet.',
     (p) => `${kg(p.weight)} · swap fee ${p.swapFee ? peso.format(p.swapFee) : 'none'} · refill cost ${p.refillCost ? peso.format(p.refillCost) : 'not set'} · ${count.format(p.sold)} sold · ${stockText(p)}`));
   }
@@ -1116,14 +1235,40 @@
     .filter(Boolean).flatMap((x, i) => (i ? [' ', x] : [x]));
   const stockLine = (p) => `${p.loaded} with load · ${p.empty} empty${p.atRefiller ? ` · ${p.atRefiller} at refiller` : ''}`;
 
+  for (const b of document.querySelectorAll('[data-inv]')) {
+    b.addEventListener('click', () => {
+      state.invTab = b.dataset.inv;
+      try { localStorage.setItem('lpg-inv-tab', state.invTab); } catch (_) { /* storage blocked */ }
+      showInvTab();
+    });
+  }
+  function showInvTab() {
+    for (const b of document.querySelectorAll('[data-inv]')) {
+      const on = b.dataset.inv === state.invTab;
+      b.setAttribute('aria-selected', String(on));
+      b.tabIndex = on ? 0 : -1;
+    }
+    for (const el of document.querySelectorAll('[data-inv-panel]')) el.hidden = el.dataset.invPanel !== state.invTab;
+  }
+
   function renderInventory() {
     const { products, suppliers, refills, movements } = state.data;
+    showInvTab();
+    const tabCount = (id, text, warn) => { const el = $(id); el.textContent = text || ''; el.hidden = !text; el.classList.toggle('warn', !!warn); };
+    const tanksOutAll = state.data.customers.reduce((n, c) => n + (c.tanksOwed || 0), 0);
+    const openTrips = refills.filter((r) => r.open || r.owed > 0).length;
+    tabCount('inv-count-out', tanksOutAll ? count.format(tanksOutAll) : '');
+    tabCount('inv-count-refiller', openTrips ? plural(openTrips, 'trip') : '');
+    tabCount('inv-count-suppliers', suppliers.length ? count.format(suppliers.length) : '', suppliers.some((s) => s.owed > 0));
+    tabCount('inv-count-staff', state.data.staffMoney.total > 0 ? UI.pesoRound.format(state.data.staffMoney.total) : '', true);
+    tabCount('inv-count-history', movements.length ? count.format(movements.length) : '');
     const attention = products.filter((p) => p.status !== 'ok');
     clear($('inventory-alert'), attention.length ? h('div', { class: 'alert-banner', role: 'status' },
       h('span', { class: 'i', 'aria-hidden': 'true' }, '⚠'),
       h('div', {},
         h('strong', {}, `${plural(attention.length, 'product')} need${attention.length === 1 ? 's' : ''} refilling`),
-        h('p', {}, attention.map((p) => `${p.label}: ${p.loaded <= 0 ? 'none with load' : p.loaded + ' with load'}${p.empty ? `, ${p.empty} empty to send` : ''}`).join(' · ')))) : null);
+        h('p', {}, attention.map((p) => `${p.label}: ${p.loaded <= 0 ? 'none with load' : p.loaded + ' with load'}${p.empty ? `, ${p.empty} empty to send` : ''}`).join(' · '))),
+      attention.some((p) => p.empty > 0) ? h('button', { type: 'button', class: 'btn small', onclick: () => sendRefillDialog((attention.find((p) => p.empty > 0 && p.supplierId) || {}).supplierId) }, 'Send empties now') : null) : null);
 
     const sum = (k) => products.reduce((n, p) => n + Math.max(0, p[k]), 0);
     const keptAll = state.data.customers.reduce((n, c) => n + (c.keptTanks || 0), 0);
@@ -1178,7 +1323,7 @@
         h('tr', { class: 'group-row' }, h('td', { colspan: cols },
           g.s ? [h('strong', {}, g.s.name), g.s.contact ? h('span', { class: 'muted' }, ` · ${g.s.contact}`) : null,
             h('button', { class: 'btn small ghost', onclick: () => sendRefillDialog(g.s.id) }, 'Send empties')]
-            : [h('strong', {}, 'No supplier set'), h('span', { class: 'muted' }, ' · add one under Suppliers below')])),
+            : [h('strong', {}, 'No supplier set'), h('span', { class: 'muted' }, ' · add one in the Suppliers tab')])),
         ...g.items.map((p) => h('tr', {},
           h('td', { class: 'sm-title' }, p.label),
           h('td', { class: 'right num sm-hide' }, count.format(p.loaded)),
@@ -1229,16 +1374,24 @@
           h('div', { class: 'meta' }, [s.contact, s.brands.join(', ')].filter(Boolean).join(' · ')),
           s.note ? h('div', { class: 'meta' }, s.note) : null,
           s.owed > 0 ? h('div', { class: 'meta owes-text' }, `Owes ${peso.format(s.owed)} (${plural(s.bills.length, 'bill')})`) : null),
-        actions(
-          s.owed > 0 ? h('button', { class: 'btn small', onclick: () => paySupplierDialog(s) }, 'Pay') : null,
-          state.me && state.me.dashboard ? h('button', { class: 'btn small ghost', onclick: () => supplierHistoryDialog(s) }, 'History') : null,
-          h('button', { class: 'btn small ghost', onclick: () => supplierDialog(s) }, 'Edit'),
-          h('button', { class: 'btn small ghost danger', onclick: () => deleteSupplier(s) }, 'Delete'))))) : h('div', { class: 'empty' }, 'No suppliers yet. Add who refills each brand.'));
+        supplierActions(s)))) : h('div', { class: 'empty' }, 'No suppliers yet. Add who refills each brand.'));
 
     clear($('movements'), movements.length ? h('div', { class: 'moves' }, movements.map((m) => h('div', { class: 'move' },
       h('div', {}, h('strong', {}, MOVE_LABEL[m.type] || m.type), ' · ', m.product, m.refillId ? h('span', { class: 'muted' }, ` · trip #${m.refillId}`) : null),
       h('div', { class: 'num' }, moveDeltas(m)),
       h('div', { class: 'meta' }, h('span', {}, [fmtTime(m.time), m.staff, m.unitCost ? `${peso.format(m.unitCost)} each` : null, m.note].filter(Boolean).join(' · ')), moveUndo(m))))) : h('div', { class: 'empty' }, 'Nothing recorded yet.'));
+  }
+
+  // Pay when something is owed, else History (dashboard staff) or Edit; the rest in the ⋯ menu.
+  function supplierActions(s) {
+    const history = state.me && state.me.dashboard ? { label: 'History', onClick: () => supplierHistoryDialog(s) } : null;
+    return rowMenu(s.owed > 0 ? { label: 'Pay', primary: true, onClick: () => paySupplierDialog(s) } : history || { label: 'Edit', onClick: () => supplierDialog(s) }, [
+      s.owed > 0 ? { label: 'Pay', onClick: () => paySupplierDialog(s) } : null,
+      history,
+      { label: 'Send empties', onClick: () => sendRefillDialog(s.id) },
+      { label: 'Edit supplier', onClick: () => supplierDialog(s) },
+      { label: 'Delete supplier…', danger: true, onClick: () => deleteSupplier(s) },
+    ], s.name);
   }
 
   // A refill's stock changes are undone with their trip; tanks received on a later day can be undone on their own,
@@ -1858,7 +2011,7 @@
 
   // Keep in sync with other devices, but never while someone is typing in a dialog.
   setInterval(() => {
-    if (state.me && document.visibilityState === 'visible' && !document.querySelector('dialog[open]')) {
+    if (state.me && document.visibilityState === 'visible' && !document.querySelector('dialog[open], details.rowmenu[open]')) {
       refresh().catch(() => {});
     }
   }, 20000);

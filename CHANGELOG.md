@@ -4,6 +4,31 @@ Every update gets a new version number. It's shown in the POS (header, account m
 
 Numbering is `major.minor.patch`: **major** when the data or the way staff work changes a lot, **minor** for new features, **patch** for fixes and small changes.
 
+## 4.0.0 — 2026-10-24
+
+A new look for the POS and the admin page (Figma "04 · Redesign (UI/UX)"). Screens and buttons only: no data or server changes, and every feature works as before.
+
+**Finding your way**
+- The top bar is now a **sidebar** on the left: New sale, Receipts, Customers, Products, Inventory (with the refill alert) and Dashboard. Your name and Sign out are at the bottom. Tablets get a narrow icon sidebar; phones keep the bottom tabs.
+- Keyboard: **F1–F6** open the sections, **Ctrl+Enter** processes the sale.
+- Each screen has a big title, a one-line summary and its main button at the top right.
+
+**Lists**
+- One table style everywhere. Status shows as a dot and a word: green paid / in stock, amber owed / tanks out / low, red unpaid / out of stock.
+- Customers, Receipts, Products and Suppliers show one main button per row (e.g. Collect payment, Record payment, Edit, Pay). Everything else, including Delete and Void, is in the **⋯** menu. Delete still asks first.
+- Filter chips with counts: Customers (All / Owes money / Has tanks out) and Receipts (All / Unpaid / Paid). Search still works with them.
+
+**New sale**
+- Tank-size chips over the tanks. Tanks with none left show a red "Out of stock".
+- Quick cash buttons (Exact and round amounts) and a **Change** box.
+- A bigger **Process sale · ₱total** button.
+
+**Inventory**
+- Split into tabs: Stock on hand, Tanks out, At refiller, Suppliers, Staff money and Stock history, with counts. The refill alert stays on top and gets a "Send empties now" button.
+
+**Dialogs**
+- Title with a ✕ on top; Cancel and the main button at the bottom right; Void on the far left in red.
+
 ## 3.9.0 — 2026-10-08
 
 The production version that ran from early October and moved to the Ubuntu server on 17 October. Versions 3.3 to 3.8 went live one by one but were never pushed separately, so this release holds all of them together.
