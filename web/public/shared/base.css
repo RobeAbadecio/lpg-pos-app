@@ -295,3 +295,11 @@ dialog.modal { border-radius: 16px; border-color: var(--border); }
   .status.out { background: rgba(255, 146, 146, .14); color: #ff9292; }
   .btn.primary { color: #fff; }
 }
+
+/* 4.1: staff salaries (POS dashboard and admin) */
+.payroll-head { padding: 18px 18px 4px; }
+.payroll-head .card-head { margin-bottom: 10px; }
+.payroll-note { margin: 0; padding: 12px 18px 16px; font-size: 13px; border-top: 1px solid var(--grid); }
+.admin-payroll { margin-top: 16px; }
+/* The phone-only detail line of a table row (shown on phones by the POS styles) */
+.rtable .sm-detail { display: none; }

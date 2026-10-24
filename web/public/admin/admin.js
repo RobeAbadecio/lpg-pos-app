@@ -398,7 +398,9 @@
     kind: ['For', 'choice', { options: { refill: 'Refill trip', purchase: 'New tanks', start: 'Owed on the start date' } }],
     source: ['Paid from', 'choice', { options: { sales: 'Sales money', owner: 'Owner’s personal money', staff: 'Staff’s own money' }, optional: 'Sales money (older record)' }],
     paidBy: ['Staff who paid', 'staff', { hint: 'Only when paid from staff’s own money.' }], recordedBy: ['Recorded by', 'staff'],
-    category: ['What for', 'choice', { options: { gasoline: 'Delivery gasoline', salary: 'Salary', advance: 'Salary advance', other: 'Other' } }],
+    category: ['What for', 'choice', { options: { gasoline: 'Delivery gasoline', salary: 'Salary', advance: 'Salary advance', repaid: 'Advance paid back', other: 'Other' } }],
+    emptyKind: ['Generic / other-brand empty', 'choice', { options: { '': 'No: an empty of a product', generic: 'Generic (no brand)', other: 'Other brand' } }],
+    emptyBrand: ['Other brand name', 'text'],
     employee: ['Employee', 'text'], advanceDeducted: ['Advance taken off (₱)', 'money'],
     method: ['Paid by', 'choice', { options: { cash: 'Cash', check: 'Check', online: 'Online' }, optional: 'Cash (older record)' }],
   };
@@ -822,6 +824,7 @@
 
   // Customers, Suppliers, Money, or Store & staff; the choice is remembered on this computer.
   let money = null;
+  let payroll = null;
   function showTab(tab) {
     if (!['customers', 'suppliers', 'money', 'store'].includes(tab)) tab = 'customers';
     for (const b of document.querySelectorAll('[data-tab]')) {
@@ -839,6 +842,9 @@
     if (tab === 'money') {
       if (!money) money = Reports.mountMoney($('money-report'), (q) => request('GET', '/api/reports/money?' + new URLSearchParams(q)));
       else money.refresh();
+      // Staff salaries (4.1): view only; employees, advances and pay days are entered in the POS Dashboard → Salaries.
+      if (!payroll) payroll = Payroll.mount($('payroll'), { load: () => request('GET', '/api/payroll') });
+      else payroll.refresh();
     }
   }
   for (const b of document.querySelectorAll('[data-tab]')) b.addEventListener('click', () => showTab(b.dataset.tab));

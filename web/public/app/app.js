@@ -14,7 +14,7 @@
   try {
     const m = localStorage.getItem('lpg-dash-mode');
     // "trends" (before 3.4) and "customers" (before 3.6) are now Sales.
-    state.dashMode = ['trends', 'customers'].includes(m) ? 'sales' : ['sales', 'suppliers', 'money', 'start'].includes(m) ? m : 'daily';
+    state.dashMode = ['trends', 'customers'].includes(m) ? 'sales' : ['sales', 'suppliers', 'money', 'salaries', 'start'].includes(m) ? m : 'daily';
     const t = localStorage.getItem('lpg-inv-tab');
     if (['stock', 'out', 'refiller', 'suppliers', 'staff', 'history'].includes(t)) state.invTab = t;
   } catch (_) { /* storage blocked */ }
@@ -545,7 +545,7 @@
     if (inCart(p.id) + 1 > available(p.id)) return toast(`Only ${available(p.id)} × ${p.label} with load`, true);
     const same = sale.lines.find((l) => l.productId === p.id && l.emptyId === p.id && !l.remark && !l.priceEdited);
     if (same) same.qty++;
-    else sale.lines.push({ key: ++lineKey, productId: p.id, qty: 1, unitPrice: p.price, priceEdited: false, emptyId: p.id, swapFee: p.swapFee || 0, remark: '' });
+    else sale.lines.push({ key: ++lineKey, productId: p.id, qty: 1, unitPrice: p.price, priceEdited: false, emptyId: p.id, emptyBrand: '', swapFee: p.swapFee || 0, remark: '' });
     renderCart();
     renderTiles();
   }
@@ -559,7 +559,11 @@
   }
 
   // A swap: the customer's empty is another brand, which costs extra (the swap fee, per tank).
+  // Generic (no brand) and other-brand empties count as swaps; they go into no product's stock.
+  const LOOSE = ['generic', 'other'];
+  const missingBrand = () => state.sale.lines.some((l) => l.emptyId === 'other' && !(l.emptyBrand || '').trim());
   const isSwap = (l) => {
+    if (LOOSE.includes(l.emptyId)) return true; // generic or another brand we don't sell
     const p = byId(state.data.products, l.productId), e = l.emptyId && byId(state.data.products, l.emptyId);
     return !!(p && e && e.brand.toLowerCase() !== p.brand.toLowerCase());
   };
@@ -572,6 +576,9 @@
     return [
       h('option', { value: p.id }, `Same: ${p.label}`),
       others.length ? h('optgroup', { label: 'Another brand (swap fee applies)' }, others.map((x) => h('option', { value: x.id }, x.label))) : null,
+      h('optgroup', { label: 'Not a brand we sell (swap fee applies)' },
+        h('option', { value: 'generic' }, `Generic (no brand) ${kg(p.weight)}`),
+        h('option', { value: 'other' }, `Other brand ${kg(p.weight)}: type it`)),
       odd ? h('option', { value: odd.id }, `${odd.label} (different size, change it)`) : null,
       h('option', { value: '' }, 'None: will bring a tank back later'),
     ];
@@ -622,14 +629,20 @@
     const swapRow = h('label', { class: 'cl-row swap-row' }, h('span', { class: 'muted' }, 'Swap fee ₱'), fee, h('small', { class: 'muted' }, 'each, for another brand'));
     const empty = h('select', { class: 'input', 'aria-label': `Empty tank returned for ${p.label}` }, emptyOptions(p, l.emptyId));
     empty.value = l.emptyId;
+    const brand = h('input', { class: 'input', maxlength: 40, placeholder: 'Brand of the empty, e.g. Shine', autocomplete: 'off', 'aria-label': `Brand of the empty for ${p.label}` });
+    brand.value = l.emptyBrand || '';
+    brand.addEventListener('input', () => { l.emptyBrand = brand.value; renderTotals(); });
+    const brandRow = h('div', { class: 'cl-row remark-row brand-row' }, brand);
     const showEmpty = () => {
       swapRow.hidden = !isSwap(l);
       owesNote.hidden = !!l.emptyId;
+      brandRow.hidden = l.emptyId !== 'other';
     };
     showEmpty();
     empty.addEventListener('change', () => {
       l.emptyId = empty.value;
       showEmpty();
+      if (l.emptyId === 'other' && !brand.value) brand.focus();
       showAmount();
       renderTotals();
     });
@@ -647,7 +660,7 @@
         h('label', { class: 'price-wrap' }, h('span', { class: 'muted' }, '× ₱'), price),
         amount),
       h('div', { class: 'cl-row empty-row' }, h('span', { class: 'muted' }, 'Empty in:'), empty),
-      swapRow, owesNote,
+      brandRow, swapRow, owesNote,
       h('div', { class: 'cl-row remark-row' }, remark));
   }
 
@@ -718,10 +731,10 @@
     note.classList.toggle('error-text', !!t.payError);
 
     const btn = $('process');
-    btn.disabled = !(c && sale.lines.length && !t.discountError && !t.payError);
+    btn.disabled = !(c && sale.lines.length && !t.discountError && !t.payError && !missingBrand());
     const ready = $('sale-ready');
     ready.hidden = !btn.disabled;
-    ready.textContent = t.discountError || t.payError || (!c && !sale.lines.length ? 'Choose a customer and add a tank to begin.' : !c ? 'Choose a customer to finish this sale.' : 'Add a tank to this receipt.');
+    ready.textContent = t.discountError || t.payError || (c && sale.lines.length && missingBrand() ? 'Type the brand of the other-brand empty.' : '') || (!c && !sale.lines.length ? 'Choose a customer and add a tank to begin.' : !c ? 'Choose a customer to finish this sale.' : 'Add a tank to this receipt.');
     btn.textContent = sale.editing ? (sale.lines.length ? `Save changes · ${peso.format(t.total)}` : 'Save changes')
       : !c && sale.lines.length ? 'Choose a customer'
       : !sale.lines.length ? 'Process sale'
@@ -816,6 +829,7 @@
       Object.assign(body, {
         ['productId.' + i]: l.productId, ['qty.' + i]: l.qty, ['unitPrice.' + i]: l.unitPrice,
         ['emptyId.' + i]: l.emptyId, ['swapFee.' + i]: isSwap(l) ? l.swapFee || 0 : '', ['remark.' + i]: l.remark.trim(),
+        ['emptyBrand.' + i]: l.emptyId === 'other' ? (l.emptyBrand || '').trim() : '',
       });
     });
     const btn = $('process');
@@ -860,6 +874,7 @@
   // ------------------------------------------------------------------ receipts
 
   const emptyText = (l) => l.owesTank ? 'No empty in: owes the tank' : l.newTank ? 'New tank (no empty in)'
+    : l.emptyKind ? `Empty in: ${l.emptyProduct} (swap)`
     : l.emptyProductId === l.productId ? 'Empty in' : `Empty in: ${l.emptyProduct} (swap)`;
 
   // onScreen: the receipt dialog, where a later payment entered by mistake can be undone (not on paper).
@@ -920,7 +935,7 @@
     sale.customerId = rc.customerId;
     sale.lines = rc.lines.map((l) => ({
       key: ++lineKey, productId: l.productId, qty: l.qty, unitPrice: l.unitPrice, priceEdited: true,
-      emptyId: l.emptyProductId || '', swapFee: l.swapFee || 0, remark: l.remark || '',
+      emptyId: l.emptyKind || l.emptyProductId || '', emptyBrand: l.emptyBrand || '', swapFee: l.swapFee || 0, remark: l.remark || '',
     }));
     sale.lastCustomerId = rc.customerId;
     for (const l of rc.lines) sale.own[l.productId] = (sale.own[l.productId] || 0) + l.qty;
@@ -1100,19 +1115,31 @@
     const owes = c.tanksOwed + (edit ? edit.qty : 0);
     if (!owes) return toast(`${fullName(c)} doesn’t owe any tanks`, true);
     const first = byId(state.data.products, edit ? edit.productId : (c.owedTanks[0] || {}).productId) || state.data.products[0];
+    // Generic (no brand) or another brand we don't sell, in each size they owe: "generic:<product id>".
+    const owedSizes = [];
+    for (const o of c.owedTanks.concat(edit ? [{ productId: edit.productId }] : [])) {
+      const x = byId(state.data.products, o.productId);
+      if (x && !owedSizes.some((y) => y.weight === x.weight)) owedSizes.push(x);
+    }
+    const looseOptions = owedSizes.flatMap((x) => [{ value: 'generic:' + x.id, label: `Generic (no brand) ${kg(x.weight)}` },
+      { value: 'other:' + x.id, label: `Other brand ${kg(x.weight)}: type it` }]);
     formDialog({
       title: editTitle(edit, `Collect tank from ${fullName(c)}`),
       message: edit ? `Without this return, ${fullName(c)} owes ${plural(owes, 'tank')}.`
         : `Owes ${plural(c.tanksOwed, 'tank')}: ` + c.owedTanks.map((o) => `${o.qty} × ${o.product} (${owedFrom(o)})`).join('; ') + '.',
       submit: edit ? 'Save changes' : 'Record return',
       fields: [
-        { name: 'productId', label: 'Empty tank brought back', type: 'select', full: true, value: first.id, options: productOptions((x) => x.label) },
+        { name: 'productId', label: 'Empty tank brought back', type: 'select', full: true,
+          value: edit && edit.emptyKind ? `${edit.emptyKind}:${edit.productId}` : first.id, options: productOptions((x) => x.label).concat(looseOptions) },
         { name: 'qty', label: 'How many', type: 'number', min: 1, max: owes, step: 1, value: edit ? edit.qty : c.tanksOwed, required: true, inputmode: 'numeric' },
         { name: 'remark', label: 'Remark', full: true, placeholder: 'e.g. brought Solane instead of Petron; dented', value: edit ? edit.remark : null },
       ],
       extra: (inputs) => {
         const hint = h('p', { class: 'warn-note', hidden: true });
+        inputs.emptyBrand = h('input', { class: 'input', name: 'emptyBrand', maxlength: 40, placeholder: 'e.g. Shine', autocomplete: 'off', value: edit ? edit.emptyBrand || null : null });
+        const brandField = h('label', { class: 'field' }, h('span', {}, 'Brand of the empty'), inputs.emptyBrand);
         const check = () => {
+          brandField.hidden = !inputs.productId.value.startsWith('other:');
           const x = byId(state.data.products, inputs.productId.value);
           const brands = new Set(c.owedTanks.map((o) => byId(state.data.products, o.productId)?.brand.toLowerCase()));
           hint.hidden = !x || brands.has(x.brand.toLowerCase());
@@ -1120,9 +1147,14 @@
         };
         inputs.productId.addEventListener('change', check);
         check();
-        return hint;
+        return [brandField, hint];
       },
-      onSubmit: (v) => mutate('POST', `/api/customers/${encodeURIComponent(c.id)}/returns`, asEdit(v, edit), edit ? 'Return corrected' : `${fullName(c)} returned ${plural(Number(v.qty), 'tank')}`),
+      onSubmit: (v) => {
+        const [kind, pid] = v.productId.includes(':') ? v.productId.split(':') : ['', v.productId];
+        if (kind === 'other' && !v.emptyBrand) throw new Error('Type the brand of the empty.');
+        const body = { ...v, productId: pid, emptyKind: kind, emptyBrand: kind === 'other' ? v.emptyBrand : '' };
+        return mutate('POST', `/api/customers/${encodeURIComponent(c.id)}/returns`, asEdit(body, edit), edit ? 'Return corrected' : `${fullName(c)} returned ${plural(Number(v.qty), 'tank')}`);
+      },
     });
   }
 
@@ -1291,6 +1323,14 @@
       }
     }
     Charts.sizeTable($('size-totals'), sizes);
+    const looseList = state.data.looseEmpties || [];
+    clear($('loose-empties'), looseList.length ? h('table', { class: 'rtable' },
+      h('thead', {}, h('tr', {}, h('th', {}, 'Size'), h('th', {}, 'Empty'), h('th', { class: 'right' }, 'Tanks'))),
+      h('tbody', {}, looseList.map((x) => h('tr', {},
+        h('td', { class: 'sm-title' }, kg(x.weight)), h('td', { class: 'sm-detail' }, x.kind === 'generic' ? 'Generic (no brand)' : `${x.label} (other brand)`),
+        h('td', { class: 'sm-hide' }, x.kind === 'generic' ? 'Generic (no brand)' : `${x.label} (other brand)`),
+        h('td', { class: 'right num sm-figure' }, count.format(x.qty))))))
+      : h('div', { class: 'empty' }, 'None yet. Choose “Generic” or “Other brand” as the empty on a sale or tank return.'));
     renderStaffMoney();
 
     const out = state.data.customers.filter((c) => c.tanksOwed > 0).sort((a, b) => b.tanksOwed - a.tanksOwed);
@@ -1846,6 +1886,10 @@
         sales: () => Reports.mountSales($('dash-sales'), report('sales')),
         suppliers: () => Reports.mountSuppliers($('dash-suppliers'), report('suppliers'), { recordRefill: recordRefillDialog }),
         money: () => Reports.mountMoney($('dash-money'), report('money'), { addExpense: expenseDialog, editExpense: expenseDialog, deleteExpense }),
+        salaries: () => (payrollView = Payroll.mount($('dash-salaries'), { load: () => api('GET', '/api/payroll').catch((e) => {
+          if (e.status === 403) { state.me.dashboard = false; updateDashboardAccess(); go('sell'); }
+          throw e;
+        }), actions: payrollActions })),
         start: () => Opening.mount($('dash-start'), {
           load: () => api('GET', '/api/opening'),
           save: (body) => mutate('POST', '/api/opening', body, 'Starting balances saved'),
@@ -1930,8 +1974,10 @@
       advances[k] = round2((advances[k] || 0) + entry.advanceDeducted);
     }
     const names = h('datalist', { id: 'employee-names' }, (report.employees || []).map((n) => h('option', { value: n })));
+    // Salaries, advances and advances paid back are entered under Dashboard → Salaries (4.1), not as expenses.
+    const isPayroll = (v) => ['salary', 'advance', 'repaid'].includes(v);
     const cat = h('select', { class: 'input', name: 'category' },
-      Object.entries(Reports.CATEGORY_ONE).map(([v, label]) => h('option', { value: v }, label)));
+      Object.entries(Reports.CATEGORY_ONE).filter(([v]) => !!(entry && isPayroll(entry.category)) === isPayroll(v)).map(([v, label]) => h('option', { value: v }, label)));
     const employee = h('input', { class: 'input', name: 'employee', list: 'employee-names', maxlength: 60, autocomplete: 'off' });
     const amount = h('input', { class: 'input num', type: 'number', min: 0, step: '0.01', inputmode: 'decimal', required: true });
     const deducted = h('input', { class: 'input num', name: 'advanceDeducted', type: 'number', min: 0, step: '0.01', inputmode: 'decimal', placeholder: '0.00' });
@@ -2004,6 +2050,175 @@
       return false;
     }
   }
+
+  // ------------------------------------------------------------------ staff salaries (4.1)
+
+  let payrollView = null;
+  // Saves, refreshes the POS data and the salaries table, and says what was saved.
+  const payrollSave = async (method, path, body, message) => {
+    const r = await mutate(method, path, body, message);
+    if (payrollView) payrollView.refresh();
+    return r;
+  };
+  const method3 = () => [{ value: 'cash', label: 'Cash' }, { value: 'online', label: 'Online (GCash, bank)' }, { value: 'check', label: 'Check' }];
+
+  // Add someone to the payroll (name, salary, schedule), or change them. name: prefill for a name on older records.
+  function employeeDialog(e, name) {
+    const nameIn = h('input', { class: 'input', name: 'name', maxlength: 60, required: true, autocomplete: 'off', value: e ? e.name : name || null });
+    const salary = h('input', { class: 'input num', name: 'salary', type: 'number', min: 0, step: '0.01', inputmode: 'decimal', required: true, value: e ? e.salary.toFixed(2) : null });
+    const sched = h('select', { class: 'input', name: 'schedule' }, [['weekly', 'Weekly'], ['twice', 'Twice a month'], ['monthly', 'Monthly']].map(([v, l]) => h('option', { value: v }, l)));
+    sched.value = e ? e.schedule : 'weekly';
+    const d1 = h('select', { class: 'input', name: 'day1' }), d2 = h('select', { class: 'input', name: 'day2' });
+    const l1 = h('span', {});
+    const d2Field = h('label', { class: 'field' }, h('span', {}, 'Second pay day'), d2);
+    const monthDays = () => Array.from({ length: 31 }, (_, i) => h('option', { value: i + 1 }, Payroll.nth(i + 1) + (i >= 28 ? ' (or the last day)' : '')));
+    const fill = (first) => {
+      const s = sched.value;
+      clear(d1, s === 'weekly' ? Payroll.DAYS.slice(1).map((day, i) => h('option', { value: i + 1 }, day)) : monthDays());
+      clear(d2, monthDays());
+      l1.textContent = s === 'weekly' ? 'Pay day' : s === 'twice' ? 'First pay day' : 'Pay day of the month';
+      d2Field.hidden = s !== 'twice';
+      const same = first && e && e.schedule === s;
+      d1.value = same ? e.day1 : s === 'weekly' ? 6 : s === 'twice' ? 15 : 30;
+      d2.value = same && e.day2 ? e.day2 : 30;
+    };
+    sched.addEventListener('change', () => fill(false));
+    fill(true);
+    return openDialog({
+      title: e ? `Edit ${e.name}` : 'Add employee',
+      message: e ? 'Changing the name also renames their salary and advance records.' : 'Their salary and when it’s paid. Advances are taken off it on pay day.',
+      submit: e ? 'Save changes' : 'Add employee',
+      body: [h('label', { class: 'field' }, h('span', {}, 'Name'), nameIn),
+        h('label', { class: 'field' }, h('span', {}, 'Salary per pay day (₱)'), salary),
+        h('div', { class: 'grid-2' }, h('label', { class: 'field' }, h('span', {}, 'Paid'), sched), h('label', { class: 'field' }, l1, d1)),
+        d2Field,
+        h('label', { class: 'field' }, h('span', {}, 'Note (optional)'), h('input', { class: 'input', name: 'note', maxlength: 120, value: e ? e.note || null : null }))],
+      onSubmit: async (form) => {
+        const body = formBody(form);
+        if (!body.name) throw new Error('Enter the employee’s name.');
+        if (!(Number(body.salary) >= 0) || body.salary === '') throw new Error('Enter the salary.');
+        if (body.schedule !== 'twice') body.day2 = '';
+        await payrollSave(e ? 'PUT' : 'POST', '/api/employees' + (e ? '/' + encodeURIComponent(e.id) : ''), body, e ? `${body.name} updated` : `${body.name} added to the payroll`);
+      },
+    });
+  }
+
+  // Money given ahead of pay day; it's taken off the salary (or paid back) later.
+  function advanceDialog(e) {
+    return formDialog({
+      title: `Salary advance for ${e.name}`,
+      message: `Salary ${peso.format(e.salary)} · already advanced ${peso.format(e.advanced)} · balance ${peso.format(e.balance)}.`,
+      submit: 'Give advance',
+      fields: [
+        { name: 'amount', label: 'Advance (₱)', type: 'number', min: '0.01', step: '0.01', required: true, inputmode: 'decimal', full: true },
+        { name: 'method', label: 'Paid by', type: 'select', full: true, value: 'cash', options: method3() },
+        { name: 'note', label: 'Note (optional)', full: true, placeholder: 'e.g. for school fees' },
+      ],
+      extra: (inputs) => {
+        const line = h('p', { class: 'cost-line' });
+        const show = () => {
+          const after = round2(e.balance - (Number(inputs.amount.value) || 0));
+          clear(line, h('span', {}, 'Balance on pay day'), h('strong', { class: 'num' + (after < 0 ? ' owes-text' : '') }, peso.format(after)),
+            after < 0 ? h('small', { class: 'owes-text' }, ' · more than the salary: the rest carries to the next pay day') : null);
+        };
+        inputs.amount.addEventListener('input', show);
+        show();
+        return [line, dateField(inputs)];
+      },
+      onSubmit: (v) => payrollSave('POST', '/api/expenses', { ...v, category: 'advance', employee: e.name }, `Advance of ${peso.format(Number(v.amount))} for ${e.name} saved`),
+    });
+  }
+
+  // Pay day: the salary, with unpaid advances taken off (they're cleared).
+  function paySalaryDialog(e) {
+    return formDialog({
+      title: `Pay ${e.name}’s salary`,
+      message: e.advanced > 0 ? `${e.name} has ${peso.format(e.advanced)} in unpaid advances. Taking them off clears them.` : `${e.name} has no unpaid advances.`,
+      submit: 'Record salary',
+      fields: [
+        { name: 'salary', label: 'Salary (₱)', type: 'number', min: '0', step: '0.01', required: true, inputmode: 'decimal', value: e.salary.toFixed(2) },
+        { name: 'advanceDeducted', label: 'Advance to take off (₱)', type: 'number', min: '0', max: e.advanced, step: '0.01', inputmode: 'decimal', value: Math.min(e.advanced, e.salary).toFixed(2) },
+        { name: 'method', label: 'Paid by', type: 'select', full: true, value: 'cash', options: method3() },
+        { name: 'note', label: 'Note (optional)', full: true, placeholder: 'e.g. pay for Oct 18–24' },
+      ],
+      extra: (inputs) => {
+        const line = h('p', { class: 'cost-line' });
+        const show = () => {
+          const hand = round2((Number(inputs.salary.value) || 0) - (Number(inputs.advanceDeducted.value) || 0));
+          clear(line, h('span', {}, 'Hand over'), h('strong', { class: 'num' }, peso.format(Math.max(0, hand))),
+            (Number(inputs.advanceDeducted.value) || 0) > 0 ? h('small', { class: 'muted' }, ` · ${peso.format(Number(inputs.advanceDeducted.value))} advance cleared`) : null);
+        };
+        inputs.salary.addEventListener('input', show);
+        inputs.advanceDeducted.addEventListener('input', show);
+        show();
+        return [line, dateField(inputs)];
+      },
+      onSubmit: (v) => {
+        const sal = Number(v.salary) || 0, take = Number(v.advanceDeducted) || 0;
+        if (sal <= 0) throw new Error('Enter the salary.');
+        if (take > e.advanced + 0.005) throw new Error(`${e.name} has only ${peso.format(e.advanced)} in unpaid advances.`);
+        if (take > sal + 0.005) throw new Error('The advance taken off is more than the salary. Take off part now; the rest stays as an advance.');
+        const { salary, ...rest } = v;
+        return payrollSave('POST', '/api/expenses', { ...rest, category: 'salary', employee: e.name, amount: round2(sal - take).toFixed(2), advanceDeducted: take ? take.toFixed(2) : '' },
+          `Salary for ${e.name} saved · hand over ${peso.format(round2(sal - take))}`);
+      },
+    });
+  }
+
+  // Clear an advance: they pay it back, or it's taken off a salary (Pay salary).
+  function clearAdvanceDialog(e) {
+    return formDialog({
+      title: `Clear ${e.name}’s advance`,
+      message: `${e.name} has ${peso.format(e.advanced)} in unpaid advances. Record money they paid back, or take it off their salary on pay day.`,
+      submit: 'Record paid back',
+      fields: [
+        { name: 'amount', label: 'Paid back (₱)', type: 'number', min: '0.01', max: e.advanced, step: '0.01', required: true, inputmode: 'decimal', value: e.advanced.toFixed(2), full: true },
+        { name: 'method', label: 'Paid with', type: 'select', full: true, value: 'cash', options: method3().slice(0, 2) },
+        { name: 'note', label: 'Note (optional)', full: true },
+      ],
+      extra: (inputs) => [dateField(inputs), e.id ? h('button', { type: 'button', class: 'btn', onclick: (ev) => { ev.currentTarget.closest('dialog').close(); paySalaryDialog(e); } },
+        'Take it off a salary instead') : null],
+      onSubmit: (v) => {
+        if ((Number(v.amount) || 0) > e.advanced + 0.005) throw new Error(`${e.name} has only ${peso.format(e.advanced)} in unpaid advances.`);
+        return payrollSave('POST', '/api/expenses', { ...v, category: 'repaid', employee: e.name }, `${e.name} paid back ${peso.format(Number(v.amount))}`);
+      },
+    });
+  }
+
+  // Everything paid to someone, newest first. A wrong entry is deleted and entered again.
+  function payrollHistory(e) {
+    const list = h('div', { class: 'moves' });
+    const draw = (items) => clear(list, items.length ? items.map((x) => h('div', { class: 'move' },
+      h('div', {}, h('strong', {}, { salary: 'Salary paid', advance: 'Advance given', repaid: 'Advance paid back' }[x.category])),
+      h('div', { class: 'num ' + (x.category === 'repaid' ? 'delta-pos' : '') }, (x.category === 'repaid' ? '+' : '−') + peso.format(x.amount)),
+      h('div', { class: 'meta' }, h('span', {}, Payroll.historyLine(x)),
+        state.me.dashboard ? h('button', { type: 'button', class: 'btn small ghost danger', onclick: async () => {
+          if (await deleteExpense({ ...x, employee: e.name })) {
+            if (payrollView) await payrollView.refresh();
+            const now = payrollView && payrollView.data() && payrollView.data().employees.find((y) => y.name.toLowerCase() === e.name.toLowerCase());
+            draw(now ? now.history : []);
+          }
+        } }, 'Delete') : null))) : h('div', { class: 'empty' }, 'Nothing paid yet.'));
+    draw(e.history || []);
+    return openDialog({
+      title: `${e.name} — salary history`,
+      message: [e.salary != null ? `Salary ${peso.format(e.salary)}` : null, e.schedule ? Payroll.scheduleText(e) : null, `advanced ${peso.format(e.advanced)}`].filter(Boolean).join(' · '),
+      wide: true, submit: null, cancel: 'Close', body: h('div', { class: 'history' }, list),
+    });
+  }
+
+  const payrollActions = {
+    menu: rowMenu,
+    add: (name) => employeeDialog(null, name),
+    edit: (e) => employeeDialog(e),
+    remove: async (e) => {
+      if (!(await confirmDialog(`Remove ${e.name} from the payroll?`, 'Their salary and advance records stay. Someone with unpaid advances can’t be removed; clear them first.', 'Remove'))) return;
+      try {
+        await payrollSave('DELETE', '/api/employees/' + encodeURIComponent(e.id), null, `${e.name} removed from the payroll`);
+      } catch (x) { toast(x.message, true); }
+    },
+    advance: advanceDialog, pay: paySalaryDialog, clear: clearAdvanceDialog, history: payrollHistory,
+  };
 
   // ------------------------------------------------------------------ boot
 

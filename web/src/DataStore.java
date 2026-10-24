@@ -16,8 +16,10 @@ import java.util.function.Predicate;
  *
  * Customers.csv       id,firstName,lastName,contactNo,address
  * LPGs.csv            id,brand,price,weight[,reorderLevel,tankPrice,refillCost,tankCost,swapFee]
- * Transactions.csv    id,customerId,lpgId,dateTime[,qty,unitPrice,staff,returnedEmpty,receiptId,emptyLpgId,remark,owesTank,swapFee]
- *                     one row per receipt line; owesTank "1": no empty came in, the customer will bring one back
+ * Transactions.csv    id,customerId,lpgId,dateTime[,qty,unitPrice,staff,returnedEmpty,receiptId,emptyLpgId,remark,owesTank,swapFee,
+ *                     emptyKind,emptyBrand]   one row per receipt line; owesTank "1": no empty came in, the customer will
+ *                     bring one back; emptyKind "generic" (no brand) or "other" (another brand, named in emptyBrand, that the
+ *                     store doesn't sell): the empty is the sold tank's size but no product's stock (emptyLpgId = lpgId)
  * Receipts.csv        id,dateTime,customerId,staff,discount,paidAtSale,note[,payMethod]   payMethod: how paidAtSale came in,
  *                     "cash" (the default) or "gcash"
  * Payments.csv        id,dateTime,receiptId,customerId,amount,staff,note[,method]          method "cash" (default) or "gcash"
@@ -31,10 +33,14 @@ import java.util.function.Predicate;
  *                     tanks bought; source "sales" (the store's money, the default), "owner" (the owner's personal
  *                     money) or "staff" (paidBy's own money); method "cash" (the default), "check" or "online"
  * StaffPaybacks.csv   id,dateTime,staff,amount,recordedBy,note   the store paying staff back for money they put in
- * TankReturns.csv     id,dateTime,customerId,lpgId,qty,staff,remark     empties brought back by customers who owed them
+ * TankReturns.csv     id,dateTime,customerId,lpgId,qty,staff,remark[,emptyKind,emptyBrand]   empties brought back by
+ *                     customers who owed them; with emptyKind, a generic / other-brand empty of lpgId's size
  * Expenses.csv        id,dateTime,category,amount,employee,method,recordedBy,note,advanceDeducted   money the store
  *                     spent besides suppliers: category gasoline (delivery), salary, advance (salary paid ahead,
- *                     taken off a later salary as advanceDeducted) or other; method "cash" (default), "online" or "check"
+ *                     taken off a later salary as advanceDeducted), repaid (an advance the employee paid back in cash:
+ *                     money in) or other; method "cash" (default), "online" or "check"
+ * Employees.csv       id,name,salary,schedule,day1,day2,created,note   staff on the payroll (matched to Expenses by name):
+ *                     schedule weekly (day1 1-7 = Mon-Sun), twice (day1, day2 = days of the month) or monthly (day1)
  * WebUsers.csv        username,salt,hash,created[,dashboard]             dashboard "1": may see the summary dashboard
  * StartingBalances.csv id,dateTime,kind,ref,lpgId,qty,amount,trip,staff,note   the business as it stood on the start
  *                     date, all dated that day at 00:00. kind: start (one row; note = when it was saved), cash (amount),
@@ -101,8 +107,17 @@ final class DataStore {
      * swapFee: extra per tank because the empty was another brand. remark: staff's note, may be empty.
      */
     record Line(String id, String receiptId, String customerId, String productId, String rawTime, LocalDateTime time,
-                int qty, double unitPrice, String staff, String emptyProductId, String remark, boolean owesTank, double swapFee) {
+                int qty, double unitPrice, String staff, String emptyProductId, String remark, boolean owesTank, double swapFee,
+                String emptyKind, String emptyBrand) {
+        Line(String id, String receiptId, String customerId, String productId, String rawTime, LocalDateTime time,
+             int qty, double unitPrice, String staff, String emptyProductId, String remark, boolean owesTank, double swapFee) {
+            this(id, receiptId, customerId, productId, rawTime, time, qty, unitPrice, staff, emptyProductId, remark, owesTank, swapFee, "", "");
+        }
+
         boolean returnedEmpty() { return !emptyProductId.isEmpty(); }
+
+        /** A generic or other-brand empty: the sold tank's size, but no product's stock. */
+        boolean looseEmpty() { return !emptyKind.isEmpty() && returnedEmpty(); }
 
         boolean newTank() { return emptyProductId.isEmpty() && !owesTank; }
 
@@ -162,9 +177,32 @@ final class DataStore {
     record Expense(String id, String rawTime, LocalDateTime time, String category, double amount, String employee,
                    String method, String recordedBy, String note, double advanceDeducted) {
         boolean cash() { return "cash".equals(method); }
+
+        /** Money out of the store: an advance paid back ("repaid") is money in. */
+        double outflow() { return "repaid".equals(category) ? -amount : amount; }
+
+        /** Salaries, advances and advances paid back: kept apart from the other expenses. */
+        boolean payroll() { return PAYROLL.contains(category); }
+
+        /** How this changes the employee's unpaid advances. */
+        double advanceEffect() {
+            return switch (category) {
+                case "advance" -> amount;
+                case "salary" -> -advanceDeducted;
+                case "repaid" -> -amount;
+                default -> 0;
+            };
+        }
     }
 
-    static final List<String> EXPENSE_CATEGORIES = List.of("gasoline", "salary", "advance", "other");
+    static final List<String> EXPENSE_CATEGORIES = List.of("gasoline", "salary", "advance", "repaid", "other");
+    static final Set<String> PAYROLL = Set.of("salary", "advance", "repaid");
+
+    /**
+     * Someone on the payroll. schedule: weekly (day1 = 1..7, Monday..Sunday), twice (a month, on day1 and day2)
+     * or monthly (on day1; a day past the month's end means its last day).
+     */
+    record Employee(String id, String name, double salary, String schedule, int day1, int day2, String created, String note) {}
 
     static String expenseMethod(String v) { return "online".equals(v) || "check".equals(v) ? v : "cash"; }
 
@@ -201,15 +239,36 @@ final class DataStore {
         int outstanding() { return sent - received - rejected; }
     }
 
-    record LineInput(Product product, int qty, double unitPrice, String emptyProductId, String remark, double swapFee) {
+    record LineInput(Product product, int qty, double unitPrice, String emptyProductId, String remark, double swapFee,
+                     String emptyKind, String emptyBrand) {
+        LineInput(Product product, int qty, double unitPrice, String emptyProductId, String remark, double swapFee) {
+            this(product, qty, unitPrice, emptyProductId, remark, swapFee, "", "");
+        }
+
         boolean owesTank() { return emptyProductId.isEmpty(); }
+
+        boolean looseEmpty() { return !emptyKind.isEmpty() && !emptyProductId.isEmpty(); }
 
         double amount() { return qty * (unitPrice + swapFee); }
     }
 
     /** Empty tanks a customer brought back for tanks they took without one. */
     record TankReturn(String id, String rawTime, LocalDateTime time, String customerId, String productId, int qty,
-                      String staff, String remark) {}
+                      String staff, String remark, String emptyKind, String emptyBrand) {
+        TankReturn(String id, String rawTime, LocalDateTime time, String customerId, String productId, int qty, String staff, String remark) {
+            this(id, rawTime, time, customerId, productId, qty, staff, remark, "", "");
+        }
+
+        boolean looseEmpty() { return !emptyKind.isEmpty(); }
+    }
+
+    /** "generic" or "other" (another brand the store doesn't sell), or "" for an empty of a product. */
+    static String emptyKind(String v) { return "generic".equals(v) || "other".equals(v) ? v : ""; }
+
+    /** "Generic" or the other brand's name, for a loose empty. */
+    static String looseLabel(String kind, String brand) {
+        return "generic".equals(kind) ? "Generic" : brand == null || brand.isBlank() ? "Other brand" : brand.trim();
+    }
 
     /** Tanks a customer still has to bring back, per receipt line (oldest are settled first). */
     record OwedTank(String customerId, String productId, int qty, String receiptId, String rawTime, LocalDateTime time) {}
@@ -250,7 +309,7 @@ final class DataStore {
                    String staff, String note, String receiptId) {}
 
     private final Table customers, products, lines, receipts, payments, movements, suppliers, refills, supplierPayments, tankReturns, paybacks, expenses, users,
-            openings, deposits;
+            openings, deposits, employees;
     private final List<Table> all;
 
     DataStore(Path dir) throws IOException {
@@ -271,9 +330,10 @@ final class DataStore {
         users = new Table("WebUsers.csv");
         openings = new Table("StartingBalances.csv");
         deposits = new Table("TankDeposits.csv");
+        employees = new Table("Employees.csv");
         // users too: the POS data carries the viewer's dashboard permission.
         all = List.of(customers, products, lines, receipts, payments, movements, suppliers, refills, supplierPayments, tankReturns, paybacks, expenses, users,
-                openings, deposits);
+                openings, deposits, employees);
     }
 
     Path dir() { return dir; }
@@ -434,8 +494,10 @@ final class DataStore {
                     default -> col(r, 10);
                 };
                 boolean owes = emptyId.isEmpty() && "1".equals(col(r, 11));
+                String kind = emptyId.isEmpty() ? "" : emptyKind(col(r, 13));
                 out.add(new Line(col(r, 0), receiptIdOf(r), col(r, 1), pid, col(r, 3), parseTime(col(r, 3)),
-                        qty, unit, col(r, 6), emptyId, remark, owes, emptyId.isEmpty() ? 0 : num(col(r, 12), 0)));
+                        qty, unit, col(r, 6), emptyId, remark, owes, emptyId.isEmpty() ? 0 : num(col(r, 12), 0),
+                        kind, kind.equals("other") ? col(r, 14) : ""));
             }
             return out;
         }
@@ -509,7 +571,7 @@ final class DataStore {
             checkStock(items, Map.of());
             Map<String, Integer> fromKept = new LinkedHashMap<>();
             if (fromDeposit) {
-                for (LineInput i : items) if (!i.emptyProductId().isEmpty()) fromKept.merge(i.emptyProductId(), i.qty(), Integer::sum);
+                for (LineInput i : items) if (!i.emptyProductId().isEmpty() && !i.looseEmpty()) fromKept.merge(i.emptyProductId(), i.qty(), Integer::sum);
                 if (fromKept.isEmpty()) throw new Conflict("No empty tank is on this receipt, so none can come from the customer's kept tanks.");
                 Map<String, Integer> held = depositsHeld().getOrDefault(customerId, Map.of());
                 for (var e : fromKept.entrySet()) {
@@ -568,7 +630,7 @@ final class DataStore {
             // Empties that came from the customer's kept tanks must stay on the receipt.
             Map<String, Integer> kept = new HashMap<>(), empties = new HashMap<>();
             for (Deposit d : deposits()) if ("used".equals(d.kind()) && d.receiptId().equals(id)) kept.merge(d.productId(), d.qty(), Integer::sum);
-            for (LineInput i : items) if (!i.emptyProductId().isEmpty()) empties.merge(i.emptyProductId(), i.qty(), Integer::sum);
+            for (LineInput i : items) if (!i.emptyProductId().isEmpty() && !i.looseEmpty()) empties.merge(i.emptyProductId(), i.qty(), Integer::sum);
             if (!kept.isEmpty() && (!old.customerId().equals(customerId) || kept.entrySet().stream().anyMatch(e -> empties.getOrDefault(e.getKey(), 0) < e.getValue()))) {
                 throw new Conflict("This sale used the customer's kept tanks as its empties. Keep those empties and the customer, or void the receipt and sell again.");
             }
@@ -619,7 +681,8 @@ final class DataStore {
         for (LineInput i : items) {
             rows.add(new String[]{String.valueOf(next++), customerId, i.product().id(), time, String.valueOf(i.qty()),
                     money(i.unitPrice()), staff == null ? "" : staff, i.emptyProductId().isEmpty() ? "0" : "1",
-                    receiptId, i.emptyProductId(), i.remark(), i.owesTank() ? "1" : "", i.swapFee() > 0 ? money(i.swapFee()) : ""});
+                    receiptId, i.emptyProductId(), i.remark(), i.owesTank() ? "1" : "", i.swapFee() > 0 ? money(i.swapFee()) : "",
+                    i.looseEmpty() ? i.emptyKind() : "", i.looseEmpty() && i.emptyKind().equals("other") ? i.emptyBrand() : ""});
         }
         lines.save(rows);
     }
@@ -701,8 +764,9 @@ final class DataStore {
         synchronized (lock) {
             List<TankReturn> out = new ArrayList<>();
             for (String[] r : tankReturns.rows()) {
+                String kind = emptyKind(col(r, 7));
                 out.add(new TankReturn(col(r, 0), col(r, 1), parseTime(col(r, 1)), col(r, 2), col(r, 3),
-                        (int) Math.max(1, num(col(r, 4), 1)), col(r, 5), col(r, 6)));
+                        (int) Math.max(1, num(col(r, 4), 1)), col(r, 5), col(r, 6), kind, kind.equals("other") ? col(r, 8) : ""));
             }
             return out;
         }
@@ -764,6 +828,13 @@ final class DataStore {
 
     /** Records empty tanks a customer brought back; they go into the store as empties of that product. */
     TankReturn returnTanks(Customer c, Product p, int qty, String staff, String remark) {
+        return returnTanks(c, p, qty, staff, remark, "", "");
+    }
+
+    /** As above; kind "generic" / "other" (brand): a loose empty of p's size instead of p itself. */
+    TankReturn returnTanks(Customer c, Product p, int qty, String staff, String remark, String kind, String brand) {
+        kind = emptyKind(kind);
+        brand = kind.equals("other") ? (brand == null ? "" : brand.trim()) : "";
         synchronized (lock) {
             int owed = owedCount(c.id());
             if (owed <= 0) throw new Conflict(c.name() + " doesn't owe any tanks.");
@@ -771,9 +842,10 @@ final class DataStore {
             List<String[]> rows = tankReturns.copy();
             String id = nextId(rows);
             String time = now();
-            rows.add(new String[]{id, time, c.id(), p.id(), String.valueOf(qty), staff, remark});
+            rows.add(kind.isEmpty() ? new String[]{id, time, c.id(), p.id(), String.valueOf(qty), staff, remark}
+                    : new String[]{id, time, c.id(), p.id(), String.valueOf(qty), staff, remark, kind, brand});
             tankReturns.save(rows);
-            return new TankReturn(id, time, parseTime(time), c.id(), p.id(), qty, staff, remark);
+            return new TankReturn(id, time, parseTime(time), c.id(), p.id(), qty, staff, remark, kind, brand);
         }
     }
 
@@ -813,9 +885,9 @@ final class DataStore {
             }
             for (Line l : lines()) {
                 s.computeIfAbsent(l.productId(), k -> new int[4])[0] -= l.qty();
-                if (l.returnedEmpty()) s.computeIfAbsent(l.emptyProductId(), k -> new int[4])[1] += l.qty();
+                if (l.returnedEmpty() && !l.looseEmpty()) s.computeIfAbsent(l.emptyProductId(), k -> new int[4])[1] += l.qty();
             }
-            for (TankReturn t : tankReturns()) s.computeIfAbsent(t.productId(), k -> new int[4])[1] += t.qty();
+            for (TankReturn t : tankReturns()) if (!t.looseEmpty()) s.computeIfAbsent(t.productId(), k -> new int[4])[1] += t.qty();
             Map<String, Stock> out = new HashMap<>();
             s.forEach((id, v) -> out.put(id, new Stock(v[0], v[1], v[2], v[3])));
             return out;
@@ -1236,10 +1308,7 @@ final class DataStore {
             Map<String, Double> owed = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
             Opening o = opening();
             if (o != null) o.advances().forEach((k, v) -> owed.merge(k, v, Double::sum));
-            for (Expense e : expenses()) {
-                if ("advance".equals(e.category())) owed.merge(e.employee(), e.amount(), Double::sum);
-                else if ("salary".equals(e.category()) && e.advanceDeducted() > 0) owed.merge(e.employee(), -e.advanceDeducted(), Double::sum);
-            }
+            for (Expense e : expenses()) if (e.advanceEffect() != 0) owed.merge(e.employee(), e.advanceEffect(), Double::sum);
             owed.replaceAll((k, v) -> round(v));
             owed.values().removeIf(v -> v <= 0.005);
             return owed;
@@ -1250,10 +1319,16 @@ final class DataStore {
     Expense addExpense(String category, double amount, String employee, String method, String recordedBy, String note, double advanceDeducted) {
         synchronized (lock) {
             if (!EXPENSE_CATEGORIES.contains(category)) throw new Conflict("Choose what the expense was for.");
-            boolean forEmployee = category.equals("salary") || category.equals("advance");
+            boolean forEmployee = PAYROLL.contains(category);
             String who = forEmployee ? employee.trim() : "";
             if (forEmployee && who.isEmpty()) throw new Conflict("Enter the employee's name.");
             if (!category.equals("salary")) advanceDeducted = 0;
+            if (category.equals("repaid")) {
+                double open = advancesOwed().getOrDefault(who, 0.0);
+                if (amount > open + 0.005) {
+                    throw new Conflict(open <= 0 ? who + " has no unpaid advance." : who + " has only ₱" + money(open) + " in unpaid advances.");
+                }
+            }
             if (advanceDeducted > 0) {
                 double open = advancesOwed().getOrDefault(who, 0.0);
                 if (advanceDeducted > open + 0.005) {
@@ -1282,7 +1357,7 @@ final class DataStore {
             Expense old = expenses().stream().filter(x -> x.id().equals(id)).findFirst().orElse(null);
             if (old == null) return null;
             if (!EXPENSE_CATEGORIES.contains(category)) throw new Conflict("Choose what the expense was for.");
-            boolean forEmployee = category.equals("salary") || category.equals("advance");
+            boolean forEmployee = PAYROLL.contains(category);
             String who = forEmployee ? employee.trim() : "";
             if (forEmployee && who.isEmpty()) throw new Conflict("Enter the employee's name.");
             if (!category.equals("salary")) advanceDeducted = 0;
@@ -1299,6 +1374,7 @@ final class DataStore {
                 double amt = e.id().equals(id) ? amount : e.amount(), took = e.id().equals(id) ? advanceDeducted : e.advanceDeducted();
                 if ("advance".equals(cat)) left.merge(name, amt, Double::sum);
                 else if ("salary".equals(cat) && took > 0) left.merge(name, -took, Double::sum);
+                else if ("repaid".equals(cat)) left.merge(name, -amt, Double::sum);
             }
             for (var e : left.entrySet()) {
                 if (e.getValue() < -0.005) throw new Conflict("That would take off more of " + e.getKey() + "'s advances than were given.");
@@ -1308,13 +1384,173 @@ final class DataStore {
         }
     }
 
+    // ---------------------------------------------------------------- payroll
+
+    List<Employee> employees() {
+        synchronized (lock) {
+            List<Employee> out = new ArrayList<>();
+            for (String[] r : employees.rows()) {
+                if (col(r, 1).isBlank()) continue;
+                out.add(new Employee(col(r, 0), col(r, 1).trim(), num(col(r, 2), 0), schedule(col(r, 3)),
+                        (int) num(col(r, 4), 1), (int) num(col(r, 5), 0), col(r, 6), col(r, 7)));
+            }
+            out.sort(Comparator.comparing(Employee::name, String.CASE_INSENSITIVE_ORDER));
+            return out;
+        }
+    }
+
+    static String schedule(String v) { return "weekly".equals(v) || "twice".equals(v) ? v : "monthly"; }
+
+    /**
+     * Adds (id null) or changes someone on the payroll. A new name must not be taken; renaming also renames
+     * their salary and advance records, so the history follows them.
+     */
+    Employee saveEmployee(String id, String name, double salary, String schedule, int day1, int day2, String note) {
+        synchronized (lock) {
+            name = name == null ? "" : name.trim();
+            if (name.isEmpty()) throw new Conflict("Enter the employee's name.");
+            schedule = schedule(schedule);
+            if (schedule.equals("weekly") ? day1 < 1 || day1 > 7 : day1 < 1 || day1 > 31) throw new Conflict("Choose the pay day.");
+            if (schedule.equals("twice") && (day2 < 1 || day2 > 31 || day2 == day1)) throw new Conflict("Choose two different pay days.");
+            if (!schedule.equals("twice")) day2 = 0;
+            if (schedule.equals("twice") && day2 < day1) { int t = day1; day1 = day2; day2 = t; }
+            String key = name;
+            Employee old = id == null ? null : employees().stream().filter(e -> e.id().equals(id)).findFirst().orElse(null);
+            if (id != null && old == null) return null;
+            if (employees().stream().anyMatch(e -> e.name().equalsIgnoreCase(key) && (old == null || !e.id().equals(old.id())))) {
+                throw new Conflict(name + " is already on the payroll.");
+            }
+            String[] row = {id == null ? "" : id, name, money(salary), schedule, String.valueOf(day1), day2 > 0 ? String.valueOf(day2) : "",
+                    old == null ? now() : old.created(), note == null ? "" : note};
+            if (old == null) {
+                List<String[]> rows = employees.copy();
+                row[0] = nextId(rows);
+                rows.add(row);
+                employees.save(rows);
+            } else {
+                if (!old.name().equals(name)) {
+                    List<String[]> rows = expenses.copy();
+                    boolean changed = false;
+                    for (String[] r : rows) {
+                        if (r.length > 4 && PAYROLL.contains(col(r, 2)) && col(r, 4).trim().equalsIgnoreCase(old.name())) { r[4] = name; changed = true; }
+                    }
+                    if (changed) expenses.save(rows);
+                    // Advances from the starting balances follow the name too (StartingBalances: kind advance, ref name).
+                    List<String[]> start = openings.copy();
+                    boolean moved = false;
+                    for (String[] r : start) {
+                        if (r.length > 3 && "advance".equals(col(r, 2)) && col(r, 3).trim().equalsIgnoreCase(old.name())) { r[3] = name; moved = true; }
+                    }
+                    if (moved) openings.save(start);
+                }
+                employees.replace(old.id(), row);
+            }
+            return new Employee(row[0], name, salary, schedule, day1, day2, row[6], row[7]);
+        }
+    }
+
+    /** Takes someone off the payroll list. Their salary and advance records stay; refused while they owe advances. */
+    Employee deleteEmployee(String id) {
+        synchronized (lock) {
+            Employee e = employees().stream().filter(x -> x.id().equals(id)).findFirst().orElse(null);
+            if (e == null) return null;
+            double owed = advancesOwed().getOrDefault(e.name(), 0.0);
+            if (owed > 0.005) throw new Conflict(e.name() + " still has ₱" + money(owed) + " in unpaid advances. Clear them first.");
+            employees.remove(id);
+            return e;
+        }
+    }
+
+    /** The next pay day on or after from. */
+    static LocalDate nextPayday(Employee e, LocalDate from) {
+        if (e.schedule().equals("weekly")) {
+            int diff = (e.day1() - from.getDayOfWeek().getValue() + 7) % 7;
+            return from.plusDays(diff);
+        }
+        for (int m = 0; m < 3; m++) {
+            java.time.YearMonth ym = java.time.YearMonth.from(from).plusMonths(m);
+            List<Integer> days = e.schedule().equals("twice") ? List.of(e.day1(), e.day2()) : List.of(e.day1());
+            for (int d : days) {
+                LocalDate pay = ym.atDay(Math.min(d, ym.lengthOfMonth()));
+                if (!pay.isBefore(from)) return pay;
+            }
+        }
+        return from;
+    }
+
+    /**
+     * Everyone on the payroll (plus names that only appear on salary or advance records, so older entries
+     * show up to be set up): salary, schedule, next pay day, unpaid advances, what's left to hand over on
+     * pay day (salary − advances), and their salary / advance / paid-back records, newest first.
+     */
+    Map<String, Object> payroll(LocalDate today) {
+        synchronized (lock) {
+            Map<String, Double> owed = advancesOwed();
+            Map<String, List<Object>> history = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+            Map<String, String> lastPaid = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+            List<Expense> all = expenses();
+            for (int i = all.size() - 1; i >= 0; i--) {
+                Expense e = all.get(i);
+                if (!e.payroll() || e.employee().isBlank()) continue;
+                history.computeIfAbsent(e.employee(), k -> new ArrayList<>()).add(Json.obj("id", e.id(), "time", e.rawTime(), "category", e.category(),
+                        "amount", round(e.amount()), "advanceDeducted", round(e.advanceDeducted()), "method", e.method(), "recordedBy", e.recordedBy(), "note", e.note()));
+                if (e.category().equals("salary")) lastPaid.putIfAbsent(e.employee(), e.rawTime());
+            }
+            Set<String> names = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+            List<Object> rows = new ArrayList<>();
+            double totalSalary = 0, totalAdvanced = 0;
+            for (Employee e : employees()) {
+                names.add(e.name());
+                double adv = owed.getOrDefault(e.name(), 0.0);
+                totalSalary += e.salary();
+                totalAdvanced += adv;
+                rows.add(Json.obj("id", e.id(), "name", e.name(), "salary", round(e.salary()), "schedule", e.schedule(), "day1", e.day1(), "day2", e.day2(),
+                        "nextPayday", nextPayday(e, today).toString(), "advanced", round(adv), "balance", round(e.salary() - adv),
+                        "lastPaid", lastPaid.get(e.name()), "note", e.note(), "history", history.getOrDefault(e.name(), List.of())));
+            }
+            // Names with records (or starting advances) but no payroll entry yet.
+            Set<String> loose = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
+            loose.addAll(history.keySet());
+            loose.addAll(owed.keySet());
+            for (String n : loose) {
+                if (names.contains(n)) continue;
+                double adv = owed.getOrDefault(n, 0.0);
+                totalAdvanced += adv;
+                rows.add(Json.obj("id", null, "name", n, "salary", null, "schedule", null, "nextPayday", null, "advanced", round(adv), "balance", null,
+                        "lastPaid", lastPaid.get(n), "history", history.getOrDefault(n, List.of())));
+            }
+            return Json.obj("employees", rows, "totalSalary", round(totalSalary), "totalAdvanced", round(totalAdvanced), "today", today.toString());
+        }
+    }
+
+    /** Generic and other-brand empties taken in (on sales and tank returns), per tank size and brand, most first. */
+    List<Object> looseEmpties() {
+        synchronized (lock) {
+            Map<String, Product> prods = productMap();
+            Map<String, Object[]> by = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+            java.util.function.BiConsumer<String[], Integer> add = (k, n) -> {
+                Product p = prods.get(k[0]);
+                double w = p == null ? 0 : p.weight();
+                String label = looseLabel(k[1], k[2]);
+                Object[] v = by.computeIfAbsent(String.format(Locale.ROOT, "%08.2f|%s", w, label.toLowerCase(Locale.ROOT)),
+                        x -> new Object[]{w, label, "generic".equals(k[1]) ? "generic" : "other", 0});
+                v[3] = (Integer) v[3] + n;
+            };
+            for (Line l : lines()) if (l.looseEmpty()) add.accept(new String[]{l.productId(), l.emptyKind(), l.emptyBrand()}, l.qty());
+            for (TankReturn t : tankReturns()) if (t.looseEmpty()) add.accept(new String[]{t.productId(), t.emptyKind(), t.emptyBrand()}, t.qty());
+            List<Object> out = new ArrayList<>();
+            for (Object[] v : by.values()) out.add(Json.obj("weight", v[0], "label", v[1], "kind", v[2], "qty", v[3]));
+            return out;
+        }
+    }
+
     /** Deletes an expense entered by mistake; returns it, or null when not found. */
     Expense deleteExpense(String id) {
         synchronized (lock) {
             Expense e = expenses().stream().filter(x -> x.id().equals(id)).findFirst().orElse(null);
             if (e == null) return null;
             if ("advance".equals(e.category()) && advancesOwed().getOrDefault(e.employee(), 0.0) < e.amount() - 0.005) {
-                throw new Conflict("Part of this advance was already taken off " + e.employee() + "'s salary. Delete that salary first.");
+                throw new Conflict("Part of this advance was already taken off " + e.employee() + "'s salary or paid back. Delete that first.");
             }
             expenses.remove(id);
             return e;
@@ -1504,10 +1740,7 @@ final class DataStore {
         }
         Map<String, Double> adv = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
         if (o != null) o.advances().forEach((k, v) -> adv.merge(k, v, Double::sum));
-        for (Expense e : expenses()) {
-            if ("advance".equals(e.category())) adv.merge(e.employee(), e.amount(), Double::sum);
-            else if ("salary".equals(e.category()) && e.advanceDeducted() > 0) adv.merge(e.employee(), -e.advanceDeducted(), Double::sum);
-        }
+        for (Expense e : expenses()) if (e.advanceEffect() != 0) adv.merge(e.employee(), e.advanceEffect(), Double::sum);
         for (var e : adv.entrySet()) if (e.getValue() < -0.005) return "More of " + e.getKey() + "'s advances were already taken off a salary.";
         return null;
     }

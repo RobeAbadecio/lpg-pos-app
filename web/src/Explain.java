@@ -85,9 +85,10 @@ final class Explain {
         double skippedExpenses = 0;
         for (DataStore.Expense e : c.store.expenses()) {
             if (!in.test(e.time())) continue;
-            if (!e.cash()) { skippedExpenses += e.amount(); continue; }
-            spent += e.amount();
-            moves.add(new Move(e.rawTime(), e.time(), "Expense: " + EXPENSE_LABEL.getOrDefault(e.category(), e.category()), e.employee().isEmpty() ? e.note() : e.employee(), -e.amount()));
+            if (!e.cash()) { skippedExpenses += e.outflow(); continue; }
+            spent += e.outflow();
+            moves.add(new Move(e.rawTime(), e.time(), (e.payroll() ? "" : "Expense: ") + EXPENSE_LABEL.getOrDefault(e.category(), e.category()),
+                    e.employee().isEmpty() ? e.note() : e.employee(), -e.outflow()));
         }
         List<List<Object>> rows = new ArrayList<>();
         for (Move m : newest(moves, Move::time)) rows.add(List.of(m.rawTime(), m.what(), m.who(), DataStore.round(m.amount())));
@@ -95,12 +96,12 @@ final class Explain {
         if (skippedGcash > 0.005) left.add(peso(skippedGcash) + " received by GCash (it goes to the e-wallet)");
         if (skippedCheck > 0.005) left.add(peso(skippedCheck) + " paid to suppliers by check (it comes from the bank)");
         if (skippedOnline > 0.005) left.add(peso(skippedOnline) + " paid to suppliers online");
-        if (skippedExpenses > 0.005) left.add(peso(skippedExpenses) + " of expenses paid online or by check");
+        if (Math.abs(skippedExpenses) > 0.005) left.add(peso(skippedExpenses) + " of expenses and salaries paid online or by check");
         return result("Cash on hand " + when, cashIn - paidOut - paidBack - spent, "money",
                 "The cash that should be in the drawer from " + when.substring(3) + ": cash received from customers, minus cash from sales paid to suppliers, "
-                        + "minus money paid back to staff, minus expenses paid in cash. Payments with the owner’s or staff’s own money don’t come out of the drawer.",
+                        + "minus money paid back to staff, minus expenses and salaries paid in cash (advances paid back count as cash in). Payments with the owner’s or staff’s own money don’t come out of the drawer.",
                 List.of(part("Cash received from customers", cashIn, "money"), part("Cash from sales paid to suppliers", -paidOut, "money"),
-                        part("Paid back to staff", -paidBack, "money"), part("Expenses paid in cash", -spent, "money")),
+                        part("Paid back to staff", -paidBack, "money"), part("Expenses and salaries paid in cash", -spent, "money")),
                 List.of(col("Time", "date"), col("What", "text"), col("Who", "text"), col("In / out", "money")), rows,
                 left.isEmpty() ? null : "Not counted: " + String.join("; ", left) + ".");
     }
@@ -338,7 +339,8 @@ final class Explain {
     private static final Map<String, String> SOURCE_LABEL = Map.of("cash", "Cash", "check", "Check", "online", "Online",
             "owner", "Owner’s personal money", "staff", "Staff’s own money");
 
-    static final Map<String, String> EXPENSE_LABEL = Map.of("gasoline", "Delivery gasoline", "salary", "Salary", "advance", "Salary advance", "other", "Other");
+    static final Map<String, String> EXPENSE_LABEL = Map.of("gasoline", "Delivery gasoline", "salary", "Salary", "advance", "Salary advance",
+            "repaid", "Advance paid back", "other", "Other");
 
     /** How a supplier payment was paid: cash, check, online, the owner's money or staff money (the five add up to Paid). */
     private static String payWay(DataStore.SupplierPayment sp) {

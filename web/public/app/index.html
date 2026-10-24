@@ -217,6 +217,10 @@
             <div class="card-head"><div><h2>By size</h2><div class="sub">Tanks of each size, all brands</div></div></div>
             <div class="table-wrap" id="size-totals"></div>
           </div>
+          <div class="card">
+            <div class="card-head"><div><h2>Generic &amp; other-brand empties</h2><div class="sub">Taken in on sales and tank returns. They aren’t in any brand’s stock and can’t go to a brand’s refiller.</div></div></div>
+            <div class="table-wrap" id="loose-empties"></div>
+          </div>
         </div>
         <div class="inv-panel" id="inv-out" role="tabpanel" aria-labelledby="inv-tab-out" data-inv-panel="out" hidden>
           <div class="card">
@@ -264,12 +268,14 @@
             <button type="button" role="radio" data-dash="sales">Sales</button>
             <button type="button" role="radio" data-dash="suppliers">Suppliers</button>
             <button type="button" role="radio" data-dash="money">Money</button>
+            <button type="button" role="radio" data-dash="salaries">Salaries</button>
             <button type="button" role="radio" data-dash="start">Starting balances</button>
           </div>
           <div id="dash-daily" class="daily" data-dash-view="daily"></div>
           <div id="dash-sales" class="daily" data-dash-view="sales" hidden></div>
           <div id="dash-suppliers" class="daily" data-dash-view="suppliers" hidden></div>
           <div id="dash-money" class="daily" data-dash-view="money" hidden></div>
+          <div id="dash-salaries" data-dash-view="salaries" hidden></div>
           <div id="dash-start" class="daily" data-dash-view="start" hidden></div>
         </div>
       </section>
@@ -293,6 +299,7 @@
   <script src="/shared/daily.js"></script>
   <script src="/shared/explain.js"></script>
   <script src="/shared/reports.js"></script>
+  <script src="/shared/payroll.js"></script>
   <script src="/opening.js"></script>
   <script src="/app.js"></script>
 </body>

@@ -64,8 +64,9 @@
         tile('Paid to suppliers', UI.pesoRound.format(t.paidSuppliers),
           t.paidStaff || t.paidOwner ? [`${peso.format(t.paidSales)} from sales`, t.paidOwner ? `${peso.format(t.paidOwner)} owner’s money` : '', t.paidStaff ? `${peso.format(t.paidStaff)} staff money` : ''].filter(Boolean).join(' · ')
             : t.paidSuppliers ? 'All from sales' : 'Nothing paid', 'supplierPaid', d.date),
-        tile('Expenses', UI.pesoRound.format(t.expenses), t.expenses ? (t.expensesCash < t.expenses ? `${peso.format(t.expensesCash)} in cash` : 'All in cash') : 'Gasoline, salaries and other costs', null, d.date),
-        tile('Cash on hand', UI.pesoRound.format(t.cashLeft), 'Cash in − cash paid to suppliers, expenses and staff', 'cashLeft', d.date),
+        tile('Expenses', UI.pesoRound.format(t.expenses), t.expenses ? (t.expensesCash < t.expenses ? `${peso.format(t.expensesCash)} in cash` : 'All in cash') : 'Gasoline and other costs', null, d.date),
+        tile('Salaries', UI.pesoRound.format(t.salaries || 0), t.salaries ? (t.salariesCash < t.salaries ? `${peso.format(t.salariesCash)} in cash` : 'All in cash') : 'Salaries and advances, less paid back', null, d.date),
+        tile('Cash on hand', UI.pesoRound.format(t.cashLeft), 'Cash in − cash paid to suppliers, expenses, salaries and staff', 'cashLeft', d.date),
         // From the starting balances on: the drawer at the end of the day (start of the day + that day's cash on hand).
         t.drawer == null ? null : tile('Cash in the drawer', UI.pesoRound.format(t.drawer),
           t.startCash != null ? `Starting cash ${peso.format(t.startCash)} + cash on hand` : `${peso.format(t.drawerBefore)} at the start of the day + cash on hand`),
@@ -96,7 +97,7 @@
         h('div', { class: 'card-head' }, h('div', {}, h('h2', {}, 'Previous days'), h('div', { class: 'sub' }, 'Tap a day to see its summary'))),
         h('div', { class: 'table-wrap' }, h('table', { class: 'days-table' },
           h('thead', {}, h('tr', {}, h('th', {}, 'Day'), h('th', { class: 'right' }, 'Sales'), h('th', { class: 'right opt' }, 'Tanks'),
-            h('th', { class: 'right opt' }, 'Cash in'), h('th', { class: 'right opt' }, 'Suppliers'), h('th', { class: 'right opt' }, 'Expenses'), h('th', { class: 'right' }, 'Cash on hand'),
+            h('th', { class: 'right opt' }, 'Cash in'), h('th', { class: 'right opt' }, 'Suppliers'), h('th', { class: 'right opt' }, 'Expenses'), h('th', { class: 'right opt' }, 'Salaries'), h('th', { class: 'right' }, 'Cash on hand'),
             drawerCol ? h('th', { class: 'right opt' }, 'In the drawer') : null)),
           h('tbody', {}, d.days.map((x) => h('tr', {
             class: x.date === d.date ? 'selected' : null, tabindex: 0, 'aria-current': x.date === d.date ? 'date' : null,
@@ -108,6 +109,7 @@
           h('td', { class: 'right num opt' }, peso.format(x.collected)),
           h('td', { class: 'right num opt' }, peso.format(x.paidSuppliers)),
           h('td', { class: 'right num opt' }, peso.format(x.expenses || 0)),
+          h('td', { class: 'right num opt' }, peso.format(x.salaries || 0)),
           h('td', { class: 'right num' + (x.cashLeft < 0 ? ' neg' : '') }, peso.format(x.cashLeft)),
           drawerCol ? h('td', { class: 'right num opt' }, x.drawer == null ? '—' : peso.format(x.drawer)) : null))))));
 

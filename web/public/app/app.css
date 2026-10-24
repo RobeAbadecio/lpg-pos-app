@@ -556,3 +556,10 @@ details.rowmenu[open] > summary { background: var(--surface-2); }
   .sidebar .demo-badge { background: rgba(250, 178, 25, .16); color: #fab219; border-color: rgba(250, 178, 25, .4); }
 }
 @media print { .sidebar { display: none !important; } }
+
+/* 4.1: brand of an other-brand empty on a receipt line */
+.brand-row .input { flex: 1; min-height: 40px; padding: 6px 10px; font-size: 14px; }
+#dash-salaries .rtable td.actions { white-space: nowrap; }
+.dash-switch { max-width: 860px; }
+.dash-switch button { white-space: nowrap; padding-left: 10px; padding-right: 10px; }
+@media (max-width: 760px) { .dash-switch button { white-space: normal; } }

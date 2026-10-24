@@ -228,13 +228,14 @@ final class Reports {
     // ------------------------------------------------------------------ money
 
     private static final class Money {
-        double cashIn, onlineIn, supplierPaid, supplierCash, supplierCheck, supplierOnline, supplierOwnStaff, paidBack, expenses, expensesCash;
+        double cashIn, onlineIn, supplierPaid, supplierCash, supplierCheck, supplierOnline, supplierOwnStaff, paidBack, expenses, expensesCash,
+                salaries, salariesCash;
         final Map<String, Double> byCategory = new LinkedHashMap<>();
         final List<DataStore.Expense> entries = new ArrayList<>();
 
         Money() { for (String c : DataStore.EXPENSE_CATEGORIES) byCategory.put(c, 0.0); }
 
-        double cashOut() { return supplierCash + expensesCash + paidBack; }
+        double cashOut() { return supplierCash + expensesCash + salariesCash + paidBack; }
 
         Map<String, Object> json() {
             Map<String, Object> cats = new LinkedHashMap<>();
@@ -244,7 +245,8 @@ final class Reports {
             return Json.obj("cashIn", r(cashIn), "onlineIn", r(onlineIn), "supplierPaid", r(supplierPaid), "supplierCash", r(supplierCash),
                     "supplierCheck", r(supplierCheck), "supplierOnline", r(supplierOnline), "supplierOwnMoney", r(supplierOwnStaff),
                     "paidBack", r(paidBack), "expenses", r(expenses), "expensesCash", r(expensesCash), "byCategory", cats,
-                    "spent", r(supplierPaid + expenses), "cashOut", r(cashOut()), "cashOnHand", r(cashIn - cashOut()), "entries", list);
+                    "salaries", r(salaries), "salariesCash", r(salariesCash),
+                    "spent", r(supplierPaid + expenses + salaries), "cashOut", r(cashOut()), "cashOnHand", r(cashIn - cashOut()), "entries", list);
         }
     }
 
@@ -291,9 +293,15 @@ final class Reports {
             if (!e.employee().isEmpty()) employees.add(e.employee());
             Money a = by.get(w.key(e.time()));
             if (a == null) continue;
+            a.byCategory.merge(e.category(), e.amount(), Double::sum);
+            // Salaries, advances and advances paid back are shown under Salaries, not as expenses.
+            if (e.payroll()) {
+                a.salaries += e.outflow();
+                if (e.cash()) a.salariesCash += e.outflow();
+                continue;
+            }
             a.expenses += e.amount();
             if (e.cash()) a.expensesCash += e.amount();
-            a.byCategory.merge(e.category(), e.amount(), Double::sum);
             a.entries.add(e);
         }
         List<Object> advances = new ArrayList<>();

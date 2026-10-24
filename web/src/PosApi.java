@@ -222,6 +222,30 @@ final class PosApi implements Http.Handler {
                 mayChange(kind, recordId, who, "change");
                 r.json(200, recordDetails(kind, recordId));
             }
+            case "GET payroll" -> {
+                requireDashboard(who);
+                r.json(200, store.payroll(LocalDate.now()));
+            }
+            case "POST employees", "PUT employees/:id" -> {
+                requireDashboard(who);
+                boolean add = r.method.equals("POST");
+                String name = limit(r.param("name").trim(), 60, "Name");
+                double salary = DataStore.round(number(r.param("salary"), "Salary", 0, 10_000_000));
+                String schedule = DataStore.schedule(r.param("schedule"));
+                int day1 = whole(r.param("day1"), "Pay day", 1, 31);
+                int day2 = r.param("day2").isEmpty() ? 0 : whole(r.param("day2"), "Second pay day", 1, 31);
+                DataStore.Employee e = store.saveEmployee(add ? null : id, name, salary, schedule, day1, day2, limit(r.param("note"), 120, "Note"));
+                if (e == null) throw new Http.Error(404, "Employee not found");
+                log.add(who, ip, (add ? "Added " : "Edited ") + "employee " + e.name() + ": salary ₱" + DataStore.money(e.salary()) + ", " + e.schedule());
+                r.json(add ? 201 : 200, Json.obj("id", e.id()));
+            }
+            case "DELETE employees/:id" -> {
+                requireDashboard(who);
+                DataStore.Employee e = store.deleteEmployee(id);
+                if (e == null) throw new Http.Error(404, "Employee not found");
+                log.add(who, ip, "Removed employee " + e.name() + " from the payroll");
+                r.json(200, Json.obj("ok", true));
+            }
             case "GET opening" -> {
                 requireDashboard(who);
                 r.json(200, openingJson());
@@ -266,8 +290,12 @@ final class PosApi implements Http.Handler {
                 DataStore.Product p = productParam(r, "productId");
                 int qty = whole(r.param("qty"), "Tanks returned", 1, 1_000);
                 String remark = limit(r.param("remark"), 120, "Remark");
-                DataStore.TankReturn t = store.returnTanks(c, p, qty, who, remark);
-                log.add(who, ip, c.name() + " returned " + qty + " empty " + p.label() + (remark.isEmpty() ? "" : " [" + remark + "]"));
+                String kind = DataStore.emptyKind(r.param("emptyKind"));
+                String brand = kind.equals("other") ? limit(r.param("emptyBrand").trim(), 40, "Brand") : "";
+                if (kind.equals("other") && brand.isEmpty()) throw new Http.Error(400, "Type the brand of the empty");
+                DataStore.TankReturn t = store.returnTanks(c, p, qty, who, remark, kind, brand);
+                log.add(who, ip, c.name() + " returned " + qty + " empty " + (kind.isEmpty() ? p.label() : DataStore.looseLabel(kind, brand) + " " + DataStore.fmtKg(p.weight()) + " kg")
+                        + (remark.isEmpty() ? "" : " [" + remark + "]"));
                 r.json(201, Json.obj("ok", true, "undo", undo("return", t.id())));
             }
             case "POST customers/:id/deposits" -> {
@@ -726,7 +754,8 @@ final class PosApi implements Http.Handler {
             }
             case "return" -> {
                 DataStore.TankReturn t = store.tankReturns().stream().filter(x -> x.id().equals(recordId)).findFirst().orElseThrow();
-                return Json.obj("kind", kind, "id", recordId, "time", t.rawTime(), "customerId", t.customerId(), "productId", t.productId(), "qty", t.qty(), "remark", t.remark());
+                return Json.obj("kind", kind, "id", recordId, "time", t.rawTime(), "customerId", t.customerId(), "productId", t.productId(), "qty", t.qty(), "remark", t.remark(),
+                        "emptyKind", t.emptyKind(), "emptyBrand", t.emptyBrand());
             }
             case "deposit" -> {
                 DataStore.Deposit d = store.deposits().stream().filter(x -> x.id().equals(recordId)).findFirst().orElseThrow();
@@ -751,6 +780,13 @@ final class PosApi implements Http.Handler {
     /** Tells the app what to send to POST undo to take a record back out (its Undo button). */
     private static Map<String, Object> undo(String kind, String id) {
         return Json.obj("kind", kind, "id", id);
+    }
+
+    /** "Generic 11.0 kg" or "Shine (other brand) 11.0 kg": a loose empty of productId's size. */
+    private String looseName(String kind, String brand, String productId) {
+        DataStore.Product p = store.product(productId);
+        String size = p == null ? "" : " " + DataStore.fmtKg(p.weight()) + " kg";
+        return "generic".equals(kind) ? "Generic" + size : DataStore.looseLabel(kind, brand) + " (other brand)" + size;
     }
 
     private void requireDashboard(String who) {
@@ -989,7 +1025,9 @@ final class PosApi implements Http.Handler {
                 soldByProduct.merge(l.productId(), l.qty(), Integer::sum);
                 lineOut.add(Json.obj("productId", l.productId(), "product", productName.apply(l.productId()), "qty", l.qty(),
                         "unitPrice", l.unitPrice(), "amount", DataStore.round(l.amount()),
-                        "emptyProductId", l.emptyProductId(), "emptyProduct", l.returnedEmpty() ? productName.apply(l.emptyProductId()) : null,
+                        "emptyProductId", l.emptyProductId(), "emptyProduct", l.looseEmpty() ? looseName(l.emptyKind(), l.emptyBrand(), l.productId())
+                                : l.returnedEmpty() ? productName.apply(l.emptyProductId()) : null,
+                        "emptyKind", l.emptyKind(), "emptyBrand", l.emptyBrand(),
                         "owesTank", l.owesTank(), "newTank", l.newTank(), "swapFee", l.swapFee(), "remark", l.remark()));
             }
             List<Object> payOut = new ArrayList<>();
@@ -1074,7 +1112,8 @@ final class PosApi implements Http.Handler {
             DataStore.TankReturn t = returns.get(i);
             DataStore.Customer c = custById.get(t.customerId());
             returnOut.add(Json.obj("id", t.id(), "time", t.rawTime(), "customerId", t.customerId(), "customer", c == null ? "Deleted customer #" + t.customerId() : c.name(),
-                    "productId", t.productId(), "product", productName.apply(t.productId()), "qty", t.qty(), "staff", t.staff(), "remark", t.remark()));
+                    "productId", t.productId(), "product", t.looseEmpty() ? looseName(t.emptyKind(), t.emptyBrand(), t.productId()) : productName.apply(t.productId()),
+                    "emptyKind", t.emptyKind(), "emptyBrand", t.emptyBrand(), "qty", t.qty(), "staff", t.staff(), "remark", t.remark()));
         }
         List<DataStore.Deposit> deps = store.deposits();
         List<Object> depositOut = new ArrayList<>();
@@ -1109,7 +1148,7 @@ final class PosApi implements Http.Handler {
         List<String> brands = products.stream().map(DataStore.Product::brand).distinct().sorted(String.CASE_INSENSITIVE_ORDER).toList();
         LocalDate startDate = store.startDate();
         return Json.obj("startDate", startDate == null ? null : startDate.toString(), "customers", custOut, "products", prodOut, "receipts", receiptOut, "movements", moveOut,
-                "suppliers", supOut, "refills", refillOut, "brands", brands, "returns", returnOut, "deposits", depositOut, "undoMinutes", UNDO_MINUTES,
+                "suppliers", supOut, "refills", refillOut, "brands", brands, "returns", returnOut, "deposits", depositOut, "looseEmpties", store.looseEmpties(), "undoMinutes", UNDO_MINUTES,
                 "staff", store.users().stream().map(DataStore.User::username).toList(), "staffMoney", Stats.staffMoney(store));
     }
 
@@ -1130,6 +1169,8 @@ final class PosApi implements Http.Handler {
             DataStore.Product p = prods.get(l.productId());
             String label = p == null ? "#" + l.productId() : p.label();
             String swap = l.owesTank() ? " (no empty, owes the tank)" : l.newTank() ? " (new tank)"
+                    : l.looseEmpty() ? " (empty " + DataStore.looseLabel(l.emptyKind(), l.emptyBrand())
+                    + (l.swapFee() > 0 ? ", swap fee ₱" + DataStore.money(l.swapFee()) + " each" : "") + ")"
                     : !l.emptyProductId().equals(l.productId()) ? " (empty " + Optional.ofNullable(prods.get(l.emptyProductId())).map(DataStore.Product::label).orElse("?")
                     + (l.swapFee() > 0 ? ", swap fee ₱" + DataStore.money(l.swapFee()) + " each" : "") + ")"
                     : "";
@@ -1206,7 +1247,15 @@ final class PosApi implements Http.Handler {
             // none, in which case the customer owes the tank and brings it back later.
             String emptyId = r.param("emptyId." + i);
             double fee = 0;
-            if (!emptyId.isEmpty()) {
+            // Generic (no brand) or another brand the store doesn't sell: an empty of the sold tank's size that
+            // goes into no product's stock. It's another brand, so the swap fee applies.
+            String kind = DataStore.emptyKind(emptyId), brand = "";
+            if (!kind.isEmpty()) {
+                emptyId = p.id();
+                brand = kind.equals("other") ? limit(r.param("emptyBrand." + i).trim(), 40, "Brand") : "";
+                if (kind.equals("other") && brand.isEmpty()) throw new Http.Error(400, "Type the brand of the empty for " + p.label());
+                fee = r.param("swapFee." + i).isEmpty() ? p.swapFee() : number(r.param("swapFee." + i), "Swap fee", 0, 1_000_000);
+            } else if (!emptyId.isEmpty()) {
                 DataStore.Product e = store.product(emptyId);
                 if (e == null) throw new Http.Error(400, "Unknown empty tank type");
                 if (e.weight() != p.weight()) throw new Http.Error(400, "The empty for " + p.label() + " must be the same size (" + DataStore.fmtKg(p.weight()) + " kg)");
@@ -1216,7 +1265,7 @@ final class PosApi implements Http.Handler {
             }
             String remark = limit(r.param("remark." + i), 80, "Remark");
             if (unit < 0) unit = p.price();
-            items.add(new DataStore.LineInput(p, qty, DataStore.round(unit), emptyId, remark, DataStore.round(fee)));
+            items.add(new DataStore.LineInput(p, qty, DataStore.round(unit), emptyId, remark, DataStore.round(fee), kind, brand));
         }
         double discount = r.param("discount").isEmpty() ? 0 : number(r.param("discount"), "Discount", 0, 10_000_000);
         double subtotal = items.stream().mapToDouble(DataStore.LineInput::amount).sum();

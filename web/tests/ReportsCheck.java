@@ -128,10 +128,11 @@ public class ReportsCheck {
         // Yesterday: cash in 2000; supplier payments by online/check don't leave the drawer; cash expenses 300 + 500.
         check(same(num(my, "cashIn"), 2000) && same(num(my, "onlineIn"), 400), "money in");
         check(same(num(my, "supplierPaid"), 3800) && same(num(my, "supplierCash"), 0), "paid to suppliers, none from the drawer");
-        check(same(num(my, "expenses"), 800) && same(num(obj(my.get("byCategory")), "advance"), 500), "expenses by category");
+        // Salaries and advances (4.1) are counted apart from the other expenses, but still leave the drawer.
+        check(same(num(my, "expenses"), 300) && same(num(my, "salaries"), 500) && same(num(obj(my.get("byCategory")), "advance"), 500), "expenses by category, salaries apart");
         check(same(num(my, "cashOnHand"), 1200), "cash on hand yesterday");
         check(same(num(mt, "cashOnHand"), 300 - 1500), "cash on hand today: salary in cash, online expense not counted");
-        check(same(num(mt, "expenses"), 1700) && list(mt.get("entries")).size() == 2, "today's expense entries");
+        check(same(num(mt, "expenses"), 200) && same(num(mt, "salaries"), 1500) && list(mt.get("entries")).size() == 1, "today's expense entries leave out the salary");
         for (String d : List.of(y, t)) {
             Map<String, Object> daily = obj(Stats.daily(store, d, 1).get("totals"));
             check(same(num(daily, "cashLeft"), num(row(money, d), "cashOnHand")), d + ": daily summary agrees with Money");
@@ -166,7 +167,7 @@ public class ReportsCheck {
         expectConflict(() -> store.updateExpense(sal.id(), "salary", 3000, "Jun", "cash", "", 900, null), "a salary can't take off more than the advances");
         store.updateExpense(sal.id(), "salary", 3500, "Jun", "online", "", 0, null);
         check(store.advancesOwed().getOrDefault("Jun", 0.0) == 500, "taking the advance off the salary again leaves it owed");
-        check(same(num(row(Reports.money(store, "day", "", "", now), back.toString()), "expenses"), 3500), "the expense counts on its new day");
+        check(same(num(row(Reports.money(store, "day", "", "", now), back.toString()), "salaries"), 3500), "the salary counts on its new day");
     }
 
     /** Read-only: the new reports agree with the existing daily summary and supplier summary on real data. */

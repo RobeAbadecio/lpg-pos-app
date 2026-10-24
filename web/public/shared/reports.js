@@ -193,8 +193,8 @@
 
   // ------------------------------------------------------------------ money
 
-  const CATEGORY = { gasoline: 'Delivery gasoline', salary: 'Salaries', advance: 'Salary advances', other: 'Other expenses' };
-  const CATEGORY_ONE = { gasoline: 'Delivery gasoline', salary: 'Salary', advance: 'Salary advance', other: 'Other' };
+  const CATEGORY = { gasoline: 'Delivery gasoline', salary: 'Salaries', advance: 'Salary advances', repaid: 'Advances paid back', other: 'Other expenses' };
+  const CATEGORY_ONE = { gasoline: 'Delivery gasoline', salary: 'Salary', advance: 'Salary advance', repaid: 'Advance paid back', other: 'Other' };
   const METHOD = { cash: 'Cash', online: 'Online', check: 'Check' };
 
   // actions.addExpense(data), actions.editExpense(data, entry) and actions.deleteExpense(entry) (POS only)
@@ -208,7 +208,7 @@
       const tiles = h('div', { class: 'kpis' },
         tile('Cash on hand', pesoR(r.cashOnHand), 'Cash in − cash out in this period', r.cashOnHand < 0 ? 'neg' : null),
         tile('Cash in', pesoR(r.cashIn), r.onlineIn ? `Plus ${peso.format(r.onlineIn)} online (GCash)` : 'From customers'),
-        tile('Spent', pesoR(r.spent), `${peso.format(r.supplierPaid)} suppliers · ${peso.format(r.expenses)} expenses`),
+        tile('Spent', pesoR(r.spent), `${peso.format(r.supplierPaid)} suppliers · ${peso.format(r.expenses)} expenses · ${peso.format(r.salaries || 0)} salaries`),
         tile('Cash out', pesoR(r.cashOut), 'Paid in cash from the drawer'),
         r.drawer == null ? null : tile('Cash in the drawer', pesoR(r.drawer), 'At the end of this period, counted from the starting cash'));
       const where = card('Where the money went', 'Everything paid out in this period, by cash, check or online',
@@ -216,13 +216,17 @@
         r.supplierPaid ? h('p', { class: 'tile-note sub-note' }, [`${peso.format(r.supplierPaid - r.supplierCheck - r.supplierOnline)} cash`,
           r.supplierCheck ? `${peso.format(r.supplierCheck)} check` : '', r.supplierOnline ? `${peso.format(r.supplierOnline)} online` : '',
           r.supplierOwnMoney ? `${peso.format(r.supplierOwnMoney)} from the owner’s or staff’s own money` : ''].filter(Boolean).join(' · ')) : null,
-        Object.keys(CATEGORY).map((k) => line(CATEGORY[k], peso.format(c[k] || 0))),
+        ['gasoline', 'other'].map((k) => line(CATEGORY[k], peso.format(c[k] || 0))),
+        line('Salaries and advances', peso.format(r.salaries || 0)),
+        c.salary || c.advance || c.repaid ? h('p', { class: 'tile-note sub-note' }, [`${peso.format(c.salary || 0)} salaries`, `${peso.format(c.advance || 0)} advances`,
+          c.repaid ? `less ${peso.format(c.repaid)} advances paid back` : ''].filter(Boolean).join(' · ')) : null,
         line('Total spent', peso.format(r.spent), 'total-row'),
         r.paidBack ? line('Paid back to staff (for suppliers they paid)', peso.format(r.paidBack), 'sub-row') : null);
       const worked = card('Cash on hand, worked out', 'Checks and online payments come from the bank, so only cash counts',
         line('Cash received from customers', peso.format(r.cashIn)),
         line('− Cash paid to suppliers from sales', peso.format(r.supplierCash)),
         line('− Expenses paid in cash', peso.format(r.expensesCash)),
+        line('− Salaries and advances paid in cash (less paid back)', peso.format(r.salariesCash || 0)),
         r.paidBack ? line('− Paid back to staff', peso.format(r.paidBack)) : null,
         line('= Cash on hand', peso.format(r.cashOnHand), 'total-row' + (r.cashOnHand < 0 ? ' neg' : '')),
         r.drawer == null ? null : [
@@ -238,10 +242,10 @@
             actions && actions.deleteExpense ? h('button', { type: 'button', class: 'btn small ghost danger', 'aria-label': `Delete ${CATEGORY_ONE[e.category]} ${peso.format(e.amount)}`,
               onclick: async () => { if (await actions.deleteExpense(e)) v.reload(); } }, 'Delete') : null))))
           : empty('No expenses in this period.'));
-      const advances = card('Salary advances', 'Not yet taken off a salary',
+      const advances = card('Salary advances', 'Not yet cleared. Salaries and advances are kept apart from expenses: see Salaries.',
         d.advances.length ? d.advances.map((a) => owedLine(a.employee, peso.format(a.owed))) : empty('No unpaid advances.'));
       const table = card('Earlier', 'Tap a row to open it', periodTable(v.period, d.rows, r.key, v.open, [
-        ['Cash in', (x) => peso.format(x.cashIn)], ['Suppliers', (x) => peso.format(x.supplierPaid), true], ['Expenses', (x) => peso.format(x.expenses), true],
+        ['Cash in', (x) => peso.format(x.cashIn)], ['Suppliers', (x) => peso.format(x.supplierPaid), true], ['Expenses', (x) => peso.format(x.expenses), true], ['Salaries', (x) => peso.format(x.salaries || 0), true],
         ['Cash on hand', (x) => peso.format(x.cashOnHand), false, (x) => x.cashOnHand < 0],
         ...(d.rows.some((x) => x.drawer != null) ? [['In the drawer', (x) => x.drawer == null ? '—' : peso.format(x.drawer), true]] : [])]));
       return [bar, v.heading(r), tiles, h('div', { class: 'dash-two' }, where, worked), h('div', { class: 'dash-two' }, entries, advances), table];

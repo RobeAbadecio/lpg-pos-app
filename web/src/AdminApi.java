@@ -70,6 +70,7 @@ final class AdminApi implements Http.Handler {
             case "GET revenue" -> r.json(200, Stats.revenue(store, r.query().getOrDefault("period", "day")));
             case "GET supplier-summary" -> r.json(200, Stats.suppliers(store, r.query().getOrDefault("period", "day"), r.query().getOrDefault("supplier", "")));
             case "GET explain" -> r.json(200, Explain.explain(store, r.query()));
+            case "GET payroll" -> r.json(200, store.payroll(java.time.LocalDate.now()));
             case "GET reports/:id" -> {
                 Map<String, String> q = r.query();
                 String period = q.getOrDefault("period", "day"), from = q.getOrDefault("from", ""), to = q.getOrDefault("to", "");

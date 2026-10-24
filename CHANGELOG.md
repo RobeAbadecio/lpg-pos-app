@@ -4,6 +4,23 @@ Every update gets a new version number. It's shown in the POS (header, account m
 
 Numbering is `major.minor.patch`: **major** when the data or the way staff work changes a lot, **minor** for new features, **patch** for fixes and small changes.
 
+## 4.1.0 — 2026-10-24
+
+**Staff salaries** (Dashboard → **Salaries**, for staff with dashboard access; view-only on the admin page's Money tab)
+- Add each employee with their **salary** and **pay schedule**: weekly (pick the day), twice a month (two days) or monthly (one day).
+- A table shows **Salary, Schedule, Next payday, Advanced** (unpaid advances) and **Balance** (salary − advances: what to hand over on pay day).
+- **Give advance** for an employee. **Clear advance**: they pay it back in cash, or it's taken off their salary with **Pay salary**, which shows what to hand over. **History** lists every salary, advance and pay-back.
+- Salaries and advances are **no longer counted as expenses**. Money and the Daily summary show them separately as **Salaries**; cash on hand still counts them, and an advance paid back is cash in. The expense form no longer offers salary or advance.
+- Salary and advance records from before 4.1 are kept as they are. Names on them show in the table as "Not set up yet": tap **Set salary** to add their salary and schedule.
+
+**Generic and other-brand empties**
+- "Empty in" on a sale, and "Empty tank brought back" on Collect tank, have two new choices: **Generic (no brand)** and **Other brand** (type the brand). The swap fee applies, and staff can change it.
+- These empties go into **no brand's stock** (they can't be sent to a brand's refiller). Inventory → Stock on hand has a new **Generic & other-brand empties** card, by size and brand.
+
+**Data**
+- New file `Employees.csv`. New columns `emptyKind` and `emptyBrand` in `Transactions.csv` and `TankReturns.csv`. New expense category `repaid` (an advance paid back).
+- The server code changed, so the update restarts the POS and the **staff link changes**.
+
 ## 4.0.0 — 2026-10-24
 
 A new look for the POS and the admin page (Figma "04 · Redesign (UI/UX)"). Screens and buttons only: no data or server changes, and every feature works as before.

@@ -10,7 +10,7 @@ final class DatabaseEditor {
     static {
         SCHEMAS.put("Customers", "id,firstName,lastName,contactNo,address");
         SCHEMAS.put("LPGs", "id,brand,price,weight,reorderLevel,tankPrice,refillCost,tankCost,swapFee");
-        SCHEMAS.put("Transactions", "id,customerId,lpgId,dateTime,qty,unitPrice,staff,returnedEmpty,receiptId,emptyLpgId,remark,owesTank,swapFee");
+        SCHEMAS.put("Transactions", "id,customerId,lpgId,dateTime,qty,unitPrice,staff,returnedEmpty,receiptId,emptyLpgId,remark,owesTank,swapFee,emptyKind,emptyBrand");
         SCHEMAS.put("Receipts", "id,dateTime,customerId,staff,discount,paidAtSale,note,payMethod");
         SCHEMAS.put("Payments", "id,dateTime,receiptId,customerId,amount,staff,note,method");
         SCHEMAS.put("StockMovements", "id,dateTime,lpgId,type,loadedDelta,emptyDelta,staff,note,damagedDelta,refillerDelta,refillId,unitCost");
@@ -18,7 +18,7 @@ final class DatabaseEditor {
         SCHEMAS.put("Refills", "id,dateTime,supplierId,staff,note,start");
         SCHEMAS.put("SupplierPayments", "id,dateTime,supplierId,refillId,kind,amount,staff,note,source,paidBy,method");
         SCHEMAS.put("StaffPaybacks", "id,dateTime,staff,amount,recordedBy,note");
-        SCHEMAS.put("TankReturns", "id,dateTime,customerId,lpgId,qty,staff,remark");
+        SCHEMAS.put("TankReturns", "id,dateTime,customerId,lpgId,qty,staff,remark,emptyKind,emptyBrand");
         SCHEMAS.put("Expenses", "id,dateTime,category,amount,employee,method,recordedBy,note,advanceDeducted");
         SCHEMAS.put("TankDeposits", "id,dateTime,customerId,lpgId,qty,kind,staff,note,receiptId");
         SCHEMAS.put("StartingBalances", "id,dateTime,kind,ref,lpgId,qty,amount,trip,staff,note");
@@ -54,6 +54,11 @@ final class DatabaseEditor {
         return Json.obj("table", table, "fields", List.of(names), "rows", data.get(table).stream().map(Arrays::asList).toList(), "revision", revision(data));
     }
     static String value(String[] row, int i) { return i < row.length ? row[i] : ""; }
+    static String[] padded(String[] row, int width) {
+        String[] out = Arrays.copyOf(row, width);
+        Arrays.fill(out, row.length, width, "");
+        return out;
+    }
     static boolean validTime(String value) {
         try { java.time.LocalDateTime.parse(value, java.time.format.DateTimeFormatter.ofPattern("uuuu-MM-dd HH:mm:ss").withResolverStyle(java.time.format.ResolverStyle.STRICT)); return true; }
         catch (java.time.format.DateTimeParseException e) { return false; }
@@ -70,9 +75,10 @@ final class DatabaseEditor {
             if (Set.of("returnedEmpty", "owesTank", "start").contains(name) && !v.isEmpty() && !v.equals("0") && !v.equals("1"))
                 throw new Http.Error(400, name + " must be 0, 1, or blank");
             if (name.equals("source") && !Set.of("", "sales", "owner", "staff").contains(v)) throw new Http.Error(400, "Source must be sales, owner or staff");
+            if (name.equals("emptyKind") && !Set.of("", "generic", "other").contains(v)) throw new Http.Error(400, "Empty kind must be generic, other or blank");
             if (name.equals("method") && Set.of("SupplierPayments", "Expenses").contains(table) && !Set.of("", "cash", "check", "online").contains(v))
                 throw new Http.Error(400, "Method must be cash, check or online");
-            if (name.equals("category") && !DataStore.EXPENSE_CATEGORIES.contains(v)) throw new Http.Error(400, "Category must be gasoline, salary, advance or other");
+            if (name.equals("category") && !DataStore.EXPENSE_CATEGORIES.contains(v)) throw new Http.Error(400, "Category must be gasoline, salary, advance, repaid or other");
             if ((name.equals("payMethod") || (name.equals("method") && table.equals("Payments"))) && !Set.of("", "cash", "gcash").contains(v))
                 throw new Http.Error(400, name + " must be cash or gcash");
             if (Set.of("price", "weight", "reorderLevel", "tankPrice", "refillCost", "tankCost", "swapFee", "qty", "unitPrice", "discount", "paidAtSale", "amount", "advanceDeducted", "loadedDelta", "emptyDelta", "damagedDelta", "refillerDelta", "unitCost").contains(name)) {
@@ -189,8 +195,10 @@ final class DatabaseEditor {
         return errors;
     }
     record Change(List<String[]> rows, String backup, String message) {}
-    static Change prepare(Path dir, String table, String mode, String id, String revision, String[] row, String reason) throws IOException {
-        fields(table);
+    static Change prepare(Path dir, String table, String mode, String id, String revision, String[] given, String reason) throws IOException {
+        // Rows from before 4.1 lack the newest columns (empty kind and brand): they're blank.
+        int width = fields(table).length;
+        String[] row = given != null && given.length > 0 && given.length < width ? padded(given, width) : given;
         if (!Set.of("add", "edit", "delete").contains(mode)) throw new Http.Error(400, "Choose add, edit or delete");
         if (reason.isBlank() || reason.length() > 200) throw new Http.Error(400, "Enter a correction reason (up to 200 characters)");
         var before = snapshot(dir);

@@ -748,7 +748,7 @@ final class Stats {
         for (DataStore.Payment p : store.payments()) if (!p.gcash()) add.accept(p.time(), p.amount());
         for (DataStore.SupplierPayment sp : store.supplierPayments()) if (sp.cashFromDrawer()) add.accept(sp.time(), -sp.amount());
         for (DataStore.Payback pb : store.paybacks()) add.accept(pb.time(), -pb.amount());
-        for (DataStore.Expense e : store.expenses()) if (e.cash()) add.accept(e.time(), -e.amount());
+        for (DataStore.Expense e : store.expenses()) if (e.cash()) add.accept(e.time(), -e.outflow());
         return out;
     }
 
@@ -767,7 +767,7 @@ final class Stats {
     private static final class Day {
         int receipts, tanks, tanksLent, tanksReturned, sent, received, bought;
         double revenue, discounts, swapFees, atSale, later, gcash, credit, refillBill, purchaseBill, paidSales, paidFromDrawer, paidOwner, paidStaff, paidCheck,
-                paidOnline, paidBack, expenses, expensesCash, cost, costedRevenue;
+                paidOnline, paidBack, expenses, expensesCash, salaries, salariesCash, cost, costedRevenue;
         boolean anyCosted;
         final Map<String, double[]> byProduct = new LinkedHashMap<>(); // label -> tanks, revenue
         final Map<String, Double> byStaff = new TreeMap<>(); // whose own money paid suppliers
@@ -775,7 +775,7 @@ final class Stats {
         double collected() { return atSale + later; }
 
         /** Cash on hand: cash in minus cash out. Checks and online transfers come from the bank, so only cash leaves the drawer. */
-        double cashLeft() { return collected() - gcash - paidFromDrawer - paidBack - expensesCash; }
+        double cashLeft() { return collected() - gcash - paidFromDrawer - paidBack - expensesCash - salariesCash; }
 
         double paidSuppliers() { return paidSales + paidOwner + paidStaff; }
 
@@ -889,8 +889,14 @@ final class Stats {
         for (DataStore.Expense e : store.expenses()) {
             Day d = at.apply(e.time());
             if (d == null) continue;
-            d.expenses += e.amount();
-            if (e.cash()) d.expensesCash += e.amount();
+            // Salaries and advances (less advances paid back) are kept apart from the other expenses.
+            if (e.payroll()) {
+                d.salaries += e.outflow();
+                if (e.cash()) d.salariesCash += e.outflow();
+            } else {
+                d.expenses += e.amount();
+                if (e.cash()) d.expensesCash += e.amount();
+            }
         }
         for (DataStore.Payback p : store.paybacks()) {
             Day d = at.apply(p.time());
@@ -911,7 +917,7 @@ final class Stats {
             Day x = e.getValue();
             rows.add(Json.obj("date", e.getKey().toString(), "receipts", x.receipts, "tanks", x.tanks, "revenue", DataStore.round(x.revenue),
                     "collected", DataStore.round(x.collected()), "paidSuppliers", DataStore.round(x.paidSuppliers()),
-                    "expenses", DataStore.round(x.expenses), "cashLeft", DataStore.round(x.cashLeft()), "profit", x.profit(),
+                    "expenses", DataStore.round(x.expenses), "salaries", DataStore.round(x.salaries), "cashLeft", DataStore.round(x.cashLeft()), "profit", x.profit(),
                     "drawer", drawer(start, cash, e.getKey())));
         }
         Map<String, Object> totals = Json.obj(
@@ -923,6 +929,7 @@ final class Stats {
                 "paidSales", DataStore.round(d.paidSales), "paidOwner", DataStore.round(d.paidOwner), "paidStaff", DataStore.round(d.paidStaff),
                 "paidCheck", DataStore.round(d.paidCheck), "paidOnline", DataStore.round(d.paidOnline), "paidSuppliers", DataStore.round(d.paidSuppliers()),
                 "paidBack", DataStore.round(d.paidBack), "expenses", DataStore.round(d.expenses), "expensesCash", DataStore.round(d.expensesCash),
+                "salaries", DataStore.round(d.salaries), "salariesCash", DataStore.round(d.salariesCash),
                 "cashLeft", DataStore.round(d.cashLeft()), "profit", d.profit(), "drawer", drawer(start, cash, date),
                 "drawerBefore", drawer(start, cash, date.minusDays(1)), "startCash", start != null && date.equals(start.start()) ? start.cash() : null);
         return Json.obj("date", date.toString(), "startDate", start == null ? null : start.start().toString(), "today", date.equals(today), "previous", date.minusDays(1).toString(),
