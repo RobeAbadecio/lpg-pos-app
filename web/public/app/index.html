@@ -12,6 +12,7 @@
   <link rel="stylesheet" href="/app.css">
 </head>
 <body>
+  <a class="skip-link" href="#main-content">Skip to content</a>
   <!-- Sign in -->
   <main id="login" class="login" hidden>
     <form id="login-form" class="card login-card" autocomplete="on">
@@ -28,7 +29,7 @@
       </label>
       <p id="login-error" class="login-error" role="alert" hidden></p>
       <button class="btn primary lg block" type="submit">Sign in</button>
-      <p class="muted small-print">Accounts are created by the admin on the server Mac.</p>
+      <p class="muted small-print">Ask your admin if you need an account.</p>
       <p class="muted small-print version-line" data-version="long"></p>
     </form>
   </main>
@@ -48,6 +49,7 @@
       <details class="usermenu">
         <summary class="btn ghost"><span class="avatar" id="avatar"></span><span id="username" class="uname"></span></summary>
         <div class="menu card">
+          <button class="btn ghost block" id="help">Fixing mistakes</button>
           <button class="btn ghost block" id="change-password">Change password</button>
           <button class="btn ghost block" id="logout">Sign out</button>
           <p class="muted menu-note" id="demo-note" hidden>Demo mode: everyone is signed in as this user.</p>
@@ -56,7 +58,8 @@
       </details>
     </header>
 
-    <main class="content">
+    <main class="content" id="main-content" tabindex="-1">
+      <div class="page-heading"><h1 id="view-title">New sale</h1><span class="muted" id="work-date"></span></div>
       <!-- New sale -->
       <section id="view-sell" class="view">
         <div class="edit-banner" id="edit-banner" hidden>
@@ -72,12 +75,13 @@
               </div>
               <div id="sell-selected"></div>
               <div id="sell-search-wrap">
-                <input id="sell-search" class="input" type="search" placeholder="Search customers…" autocomplete="off">
+                <input id="sell-search" class="input" type="search" placeholder="Search customers…" aria-label="Search customers by name, number or address" autocomplete="off">
                 <div id="sell-results" class="pick-list"></div>
               </div>
             </div>
             <div class="card">
               <div class="card-head"><div><h2>2 · LPG tanks</h2><div class="sub">Tap to add to the receipt; tap again for one more</div></div></div>
+              <input id="sell-product-search" class="input product-search" type="search" placeholder="Find a brand or tank size…" aria-label="Find tanks by brand or size" autocomplete="off">
               <div id="sell-products" class="product-grid"></div>
             </div>
           </div>
@@ -100,6 +104,10 @@
                   <button type="button" role="radio" data-pay="partial">Partial</button>
                   <button type="button" role="radio" data-pay="later">Pay later</button>
                 </div>
+                <div class="seg small" role="radiogroup" aria-label="Paid with" id="pay-method">
+                  <button type="button" role="radio" data-method="cash">Cash</button>
+                  <button type="button" role="radio" data-method="gcash">GCash</button>
+                </div>
                 <div id="pay-full" class="pay-detail">
                   <label class="field inline"><span>Cash received</span><input id="cash" class="input num" inputmode="decimal" placeholder="Optional" autocomplete="off"></label>
                   <div class="change" id="change"></div>
@@ -110,7 +118,10 @@
                 <p id="credit-note" class="credit-note" hidden></p>
               </div>
               <label class="field"><span>Note on receipt (optional)</span><input id="cart-note" class="input" maxlength="160" autocomplete="off"></label>
-              <button class="btn primary lg block" id="process" disabled>Process sale</button>
+              <label class="field" id="sale-date-field" hidden><span>Date of sale</span><input id="sale-date" class="input" type="date" aria-describedby="sale-date-help">
+                <small class="muted" id="sale-date-help">Change it to enter a sale made on another day.</small></label>
+              <button class="btn primary lg block" id="process" aria-describedby="sale-ready" disabled>Process sale</button>
+              <p class="sale-ready" id="sale-ready" role="status">Choose a customer and add a tank to begin.</p>
             </div>
             <div class="card">
               <div class="card-head"><h2>Latest receipts</h2><button class="btn small ghost" data-goto="history">See all</button></div>
@@ -130,7 +141,7 @@
                 <button type="button" role="radio" data-filter="all">All</button>
                 <button type="button" role="radio" data-filter="unpaid">Unpaid</button>
               </div>
-              <input id="history-search" class="input search" type="search" placeholder="Search receipts…">
+              <input id="history-search" class="input search" type="search" placeholder="Search receipts…" aria-label="Search receipts">
             </div>
           </div>
           <div class="table-wrap" id="history-table"></div>
@@ -143,7 +154,7 @@
           <div class="card-head wrap">
             <div><h2>Customers</h2><div class="sub" id="customers-summary"></div></div>
             <div class="head-actions">
-              <input id="customers-search" class="input search" type="search" placeholder="Search customers…">
+              <input id="customers-search" class="input search" type="search" placeholder="Search customers…" aria-label="Search customer records">
               <button class="btn primary" id="add-customer">+ Add customer</button>
             </div>
           </div>
@@ -172,6 +183,7 @@
               <div class="head-actions">
                 <button class="btn primary" id="refill-send">Send to refiller</button>
                 <button class="btn" id="refill-receive">Receive from refiller</button>
+                <button class="btn" id="refill-record">Record refill</button>
                 <button class="btn" id="stock-purchase">Buy new tanks</button>
                 <button class="btn" id="stock-adjust">Count / adjust</button>
               </div>
@@ -211,75 +223,27 @@
         <div class="stack">
           <div class="seg dash-switch" role="radiogroup" aria-label="Dashboard view">
             <button type="button" role="radio" data-dash="daily">Daily summary</button>
-            <button type="button" role="radio" data-dash="trends">Trends</button>
+            <button type="button" role="radio" data-dash="sales">Sales</button>
+            <button type="button" role="radio" data-dash="suppliers">Suppliers</button>
+            <button type="button" role="radio" data-dash="money">Money</button>
+            <button type="button" role="radio" data-dash="start">Starting balances</button>
           </div>
-          <div id="dash-daily" class="daily"></div>
-          <div id="dash-trends" class="stack" hidden>
-          <div class="filters" role="group" aria-label="Date range">
-            <button class="chip" data-range="today">Today</button>
-            <button class="chip" data-range="7">7 days</button>
-            <button class="chip" data-range="30">30 days</button>
-            <button class="chip" data-range="90">90 days</button>
-            <span class="muted updated" id="d-updated"></span>
-          </div>
-          <div id="dash-body" class="stack">
-            <section class="card revenue">
-              <div class="label">Revenue</div>
-              <div class="hero-value" id="d-revenue">—</div>
-              <div class="delta" id="d-revenue-delta"></div>
-              <div class="chart-head"><h2 id="d-trend-title">Revenue by day</h2><span class="sub" id="d-trend-sub"></span></div>
-              <div class="chart" id="d-trend"></div>
-            </section>
-            <section class="kpis">
-              <div class="card tile"><div class="label">Receipts</div><div class="value" id="d-count">—</div><div class="delta" id="d-count-delta"></div></div>
-              <div class="card tile"><div class="label">Tanks sold</div><div class="value" id="d-qty">—</div><div class="delta" id="d-qty-delta"></div></div>
-              <div class="card tile"><div class="label">Cash collected</div><div class="value" id="d-collected">—</div><div class="delta" id="d-collected-delta"></div></div>
-              <div class="card tile"><div class="label">Paid to suppliers</div><div class="value" id="d-supplier">—</div><div class="delta" id="d-supplier-delta"></div><div class="tile-note" id="d-supplier-note"></div></div>
-              <div class="card tile"><div class="label">Gross profit (est.)</div><div class="value" id="d-profit">—</div><div class="delta" id="d-profit-delta"></div><div class="tile-note" id="d-profit-note"></div></div>
-            </section>
-            <div class="dash-two">
-              <section class="card">
-                <div class="card-head"><div><h2>Revenue by product</h2><div class="sub">Tanks sold in this period</div></div></div>
-                <div id="d-products"></div>
-              </section>
-              <section class="card">
-                <div class="card-head"><div><h2>Tanks by size</h2><div class="sub" id="d-size-sub"></div></div></div>
-                <div class="table-wrap" id="d-sizes"></div>
-              </section>
-            </div>
-            <div class="dash-two">
-              <section class="card">
-                <div class="card-head"><div><h2>Tanks not returned</h2><div class="sub" id="d-tanks-sub"></div></div></div>
-                <div id="d-tanks"></div>
-              </section>
-              <section class="card">
-                <div class="card-head"><div><h2>Unpaid balances</h2><div class="sub" id="d-unpaid-sub"></div></div></div>
-                <div id="d-unpaid"></div>
-              </section>
-            </div>
-            <div class="dash-two">
-              <section class="card">
-                <div class="card-head"><div><h2>Owed to suppliers</h2><div class="sub" id="d-suppliers-sub"></div></div></div>
-                <div id="d-suppliers"></div>
-              </section>
-              <section class="card">
-                <div class="card-head"><div><h2>Owed to staff</h2><div class="sub" id="d-staff-sub"></div></div></div>
-                <div id="d-staff"></div>
-              </section>
-            </div>
-          </div>
-          </div>
+          <div id="dash-daily" class="daily" data-dash-view="daily"></div>
+          <div id="dash-sales" class="daily" data-dash-view="sales" hidden></div>
+          <div id="dash-suppliers" class="daily" data-dash-view="suppliers" hidden></div>
+          <div id="dash-money" class="daily" data-dash-view="money" hidden></div>
+          <div id="dash-start" class="daily" data-dash-view="start" hidden></div>
         </div>
       </section>
     </main>
 
     <nav class="bottomnav" aria-label="Sections">
-      <button class="tab" data-view="sell"><span class="ico">＋</span>Sale</button>
-      <button class="tab" data-view="history"><span class="ico">≡</span>Receipts</button>
-      <button class="tab" data-view="customers"><span class="ico">☺</span>Customers</button>
-      <button class="tab" data-view="products"><span class="ico">◍</span>Products</button>
-      <button class="tab" data-view="inventory"><span class="ico">▤</span>Stock<span class="tab-alert" id="tab-alert-sm" hidden></span></button>
-      <button class="tab" data-view="dashboard" hidden><span class="ico">◔</span>Dashboard</button>
+      <button class="tab" data-view="sell"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Sale</button>
+      <button class="tab" data-view="history"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2V3ZM9 8h6M9 12h6"/></svg>Receipts</button>
+      <button class="tab" data-view="customers"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3"/><path d="M3 20v-2a6 6 0 0 1 12 0v2M16 5a3 3 0 0 1 0 6M18 14a5 5 0 0 1 3 4v2"/></svg>Customers</button>
+      <button class="tab" data-view="products"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 9 5-9 5-9-5 9-5ZM3 8v9l9 5 9-5V8M12 13v9"/></svg>Products</button>
+      <button class="tab" data-view="inventory"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 3v18M20 3v18M4 10h16M4 18h16M7 4h4v6H7ZM13 12h4v6h-4Z"/></svg>Stock<span class="tab-alert" id="tab-alert-sm" hidden></span></button>
+      <button class="tab" data-view="dashboard" hidden><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10h4v10ZM10 20V4h4v16ZM16 20v-7h4v7Z"/></svg>Dashboard</button>
     </nav>
   </div>
 
@@ -289,6 +253,9 @@
   <script src="/shared/ui.js"></script>
   <script src="/shared/charts.js"></script>
   <script src="/shared/daily.js"></script>
+  <script src="/shared/explain.js"></script>
+  <script src="/shared/reports.js"></script>
+  <script src="/opening.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

@@ -38,6 +38,10 @@
       const s = (hr % 12 || 12) + (hr < 12 ? ' AM' : ' PM');
       return long ? `Today, ${s}–${((hr + 1) % 12 || 12) + (hr + 1 < 12 || hr + 1 === 24 ? ' AM' : ' PM')}` : s;
     }
+    if (bucket === 'quarter') {
+      const [y, q] = key.split('-Q').map(Number);
+      return long ? `Q${q} ${y} (${['Jan–Mar', 'Apr–Jun', 'Jul–Sep', 'Oct–Dec'][q - 1]})` : `Q${q} '${String(y).slice(2)}`;
+    }
     if (bucket === 'month') {
       const [y, m] = key.split('-').map(Number);
       return new Date(y, m - 1, 1).toLocaleDateString('en-PH', long ? { month: 'long', year: 'numeric' } : { month: 'short', year: '2-digit' });

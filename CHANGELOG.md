@@ -4,6 +4,31 @@ Every update gets a new version number. It's shown in the POS (header, account m
 
 Numbering is `major.minor.patch`: **major** when the data or the way staff work changes a lot, **minor** for new features, **patch** for fixes and small changes.
 
+## 3.9.0 — 2026-10-08
+
+The production version that ran from early October and moved to the Ubuntu server on 17 October. Versions 3.3 to 3.8 went live one by one but were never pushed separately, so this release holds all of them together.
+
+**Dashboard reports**
+- The POS Dashboard has **Daily summary**, **Sales**, **Suppliers**, **Money** and **Starting balances**. Sales, Suppliers and Money can be shown by day, week, month or quarter.
+- Tap a number to see **how it was worked out**.
+- **Money** shows cash on hand, money in and out, and expenses: delivery gasoline, salaries, salary advances and other costs. A salary takes off the employee's unpaid advances.
+
+**Starting balances**
+- Enter what customers owed, tanks they still had, stock on hand and supplier balances on the start date.
+
+**Fixing mistakes**
+- **Undo** and **Edit** on sales, payments, refills, stock changes, tank returns, supplier payments and paybacks. Staff can change what they entered in the last 30 minutes; staff with dashboard access can change anything. Something that later records depend on can't be undone, and the message says why.
+- A help page (account menu → **Fixing mistakes**) says where to fix each kind of record.
+- Staff with dashboard access can enter a record for an earlier day, and move a receipt to another day.
+
+**Stock and suppliers**
+- **Record refill**: empties go out and come back filled in one step.
+- Supplier payments can also come from the **owner's personal money**, paid by cash, check or online.
+- **Customers' own tanks** kept at the store, separate from the store's stock. They can be used as the empties on a sale.
+
+**Other**
+- A red bar shows when the POS server can't be reached, so nobody types a sale that won't save.
+
 ## 3.2.0 — 2026-10-02
 
 **Edit records (admin dashboard)**

@@ -41,7 +41,10 @@ final class Tunnel {
     static String binary() {
         List<String> candidates = new ArrayList<>(List.of("/opt/homebrew/bin/cloudflared", "/usr/local/bin/cloudflared"));
         String path = System.getenv("PATH");
-        if (path != null) for (String d : path.split(File.pathSeparator)) candidates.add(d + "/cloudflared");
+        if (path != null) for (String d : path.split(File.pathSeparator)) {
+            candidates.add(Path.of(d, "cloudflared.exe").toString());
+            candidates.add(Path.of(d, "cloudflared").toString());
+        }
         for (String c : candidates) if (Files.isExecutable(Path.of(c))) return c;
         return null;
     }

@@ -4,8 +4,12 @@
   const { columnChart, hbars, delta, sizeTable, bucketLabel, fmtDate } = Charts;
   const $ = (id) => document.getElementById(id);
 
-  const state = { range: '7', stats: null, overview: null, lastStats: 0, table: false };
-  try { state.range = localStorage.getItem('lpg-admin-range') || '7'; } catch (_) { /* storage blocked */ }
+  const state = { period: 'day', supPeriod: 'day', supplier: '', stats: null, revenue: null, suppliers: null, overview: null, lastStats: 0, table: false };
+  try {
+    state.period = localStorage.getItem('lpg-admin-period') || 'day';
+    state.supPeriod = localStorage.getItem('lpg-admin-sup-period') || 'day';
+    state.supplier = localStorage.getItem('lpg-admin-supplier') || '';
+  } catch (_) { /* storage blocked */ }
 
   // ------------------------------------------------------------------ data loading
 
@@ -21,15 +25,26 @@
   async function loadStats() {
     $('analytics').classList.add('loading');
     try {
-      state.stats = await request('GET', '/api/stats?range=' + encodeURIComponent(state.range));
+      const [stats, revenue, suppliers] = await Promise.all([
+        request('GET', '/api/stats?range=' + encodeURIComponent(statsRange())),
+        request('GET', '/api/revenue?period=' + encodeURIComponent(state.period)),
+        request('GET', '/api/supplier-summary?period=' + encodeURIComponent(state.supPeriod) + '&supplier=' + encodeURIComponent(state.supplier))]);
+      state.stats = stats;
+      state.revenue = revenue;
+      state.suppliers = suppliers;
       state.lastStats = Date.now();
       renderStats();
+      renderRevenue();
+      renderSuppliers();
     } catch (e) {
       setStatus(false, 'Server unreachable');
     } finally {
       $('analytics').classList.remove('loading');
     }
   }
+
+  // One Daily / Monthly / Quarterly switch drives the whole Customers tab: today, this month or this quarter so far.
+  const statsRange = () => ({ day: 'today', month: 'month', quarter: 'quarter' }[state.period] || 'today');
 
   function setStatus(ok, text) {
     const el = $('server-status');
@@ -56,11 +71,9 @@
     setStatus(true, 'Online · up ' + uptime(o.server.uptimeSeconds));
     $('open-pos').href = o.server.localUrl;
 
-    $('url-local').href = o.server.localUrl;
-    $('url-local').textContent = o.server.localUrl.replace('http://', '');
     clear($('url-lan'), o.server.lanUrls.length
       ? o.server.lanUrls.map((u) => h('div', { class: 'tunnel-row' }, h('a', { class: 'url', href: u, target: '_blank', rel: 'noopener' }, u.replace('http://', '')), copyButton(u)))
-      : h('span', { class: 'muted' }, 'Not connected to a network'));
+      : h('span', { class: 'muted' }, 'Disabled. Staff use the Cloudflare internet link.'));
 
     renderTunnel(o.tunnel);
     renderInventory(o.inventory);
@@ -250,19 +263,23 @@
   }
 
   function renderUsers(users) {
-    clear($('users'), users.length ? h('div', { class: 'list' }, users.map((u) => h('div', { class: 'list-row' },
-      h('span', { class: 'avatar' }, u.username.slice(0, 1)),
-      h('div', { class: 'grow' },
-        h('div', { class: 'name' }, u.username, u.online ? h('span', { class: 'pill via' }, h('span', { class: 'dot good' }), 'online') : null),
-        h('div', { class: 'meta' }, 'Added ' + fmtTime(u.created) + (u.dashboard ? ' · sees the dashboard' : ''))),
-      // The admin chooses who may open the summary dashboard in the POS: an on/off switch.
-      h('label', { class: 'switch', title: 'Let this person see the sales and stock dashboard in the POS' },
-        h('input', { type: 'checkbox', role: 'switch', checked: u.dashboard, 'aria-label': `Dashboard for ${u.username}`,
-          onchange: (e) => setDashboard(u.username, e.target.checked) }),
-        h('span', { class: 'track', 'aria-hidden': 'true' }),
-        h('span', {}, 'Dashboard')),
-      h('button', { class: 'btn small ghost', onclick: () => resetPassword(u.username) }, 'Reset password'),
-      h('button', { class: 'btn small ghost danger', onclick: () => deleteUser(u.username) }, 'Delete')))) : h('div', { class: 'empty' }, 'No staff accounts yet. Create one below so staff can sign in.'));
+    clear($('users'), users.length ? h('div', { class: 'staff-list' }, users.map((u) => h('article', { class: 'staff-account' },
+      h('div', { class: 'staff-identity' },
+        h('span', { class: 'avatar', 'aria-hidden': 'true' }, u.username.slice(0, 1)),
+        h('div', { class: 'staff-details' },
+          h('div', { class: 'staff-name' }, u.username),
+          h('div', { class: 'staff-meta' }, 'Added ' + fmtTime(u.created))),
+        u.online ? h('span', { class: 'pill via' }, h('span', { class: 'dot good' }), 'Online') : null),
+      h('div', { class: 'staff-permission' },
+        h('div', {}, h('strong', {}, 'Dashboard access'), h('div', { class: 'staff-meta' }, 'View sales and stock in the POS')),
+        h('label', { class: 'switch', title: 'Let this person see the sales and stock dashboard in the POS' },
+          h('input', { type: 'checkbox', role: 'switch', checked: u.dashboard, 'aria-label': `Dashboard for ${u.username}`,
+            onchange: (e) => setDashboard(u.username, e.target.checked) }),
+          h('span', { class: 'track', 'aria-hidden': 'true' }),
+          h('span', {}, u.dashboard ? 'On' : 'Off'))),
+      h('div', { class: 'staff-actions' },
+        h('button', { class: 'btn small', 'aria-label': `Reset password for ${u.username}`, onclick: () => resetPassword(u.username) }, 'Reset password'),
+        h('button', { class: 'btn small ghost danger', 'aria-label': `Delete account for ${u.username}`, onclick: () => deleteUser(u.username) }, 'Delete account'))))) : h('div', { class: 'empty' }, 'No staff accounts yet. Create one below so staff can sign in.'));
   }
 
   function renderActivity(items) {
@@ -299,7 +316,7 @@
 
   function showCredentials(username, password) {
     const o = state.overview;
-    const link = (o.tunnel.status === 'online' && o.tunnel.url) || o.server.lanUrls[0] || o.server.localUrl;
+    const link = (o.tunnel.status === 'online' && o.tunnel.url) || 'Start the Cloudflare internet link before staff sign in.';
     const text = `LPG POS sign-in\nAddress: ${link}\nUsername: ${username}\nPassword: ${password}`;
     const box = $('new-credentials');
     clear(box,
@@ -353,6 +370,9 @@
     Refills: ['Refiller trips', 'Each trip of empties sent to a refiller. The tanks are in Stock changes.'],
     SupplierPayments: ['Supplier payments', 'Money paid to refillers and for new tanks.'],
     StaffPaybacks: ['Staff paybacks', 'Money the store gave back to staff who paid suppliers from their own pocket.'],
+    Expenses: ['Expenses', 'Delivery gasoline, salaries, salary advances and other costs. For a salary, Amount is what was handed over.'],
+    TankDeposits: ['Kept customer tanks', 'Customers’ own tanks left with the store, given back, or handed over as the empty on a sale. They are not the store’s stock.'],
+    StartingBalances: ['Starting balances', 'The business as it stood on the start date. Staff with dashboard access change these in Dashboard → Starting balances.'],
   };
   const MOVE_TYPES = { delivery: 'Delivery', purchase: 'Bought new tanks', count: 'Stock count', damaged: 'Write-off', other: 'Adjustment',
     condition: 'Tank condition', 'refill-send': 'Sent to refiller', 'refill-receive': 'Back from refiller', 'refill-reject': 'Returned unfilled' };
@@ -375,14 +395,27 @@
     loadedDelta: ['With load (+/−)', 'signed'], emptyDelta: ['Empty (+/−)', 'signed'], damagedDelta: ['Damaged (+/−)', 'signed'],
     refillerDelta: ['At refiller (+/−)', 'signed'], unitCost: ['Cost each (₱)', 'money'],
     name: ['Name', 'text'], contact: ['Contact', 'text'],
-    kind: ['For', 'choice', { options: { refill: 'Refill trip', purchase: 'New tanks' } }],
-    source: ['Paid from', 'choice', { options: { sales: 'Sales money', staff: 'Staff’s own money' }, optional: 'Sales money (older record)' }],
+    kind: ['For', 'choice', { options: { refill: 'Refill trip', purchase: 'New tanks', start: 'Owed on the start date' } }],
+    source: ['Paid from', 'choice', { options: { sales: 'Sales money', owner: 'Owner’s personal money', staff: 'Staff’s own money' }, optional: 'Sales money (older record)' }],
     paidBy: ['Staff who paid', 'staff', { hint: 'Only when paid from staff’s own money.' }], recordedBy: ['Recorded by', 'staff'],
+    category: ['What for', 'choice', { options: { gasoline: 'Delivery gasoline', salary: 'Salary', advance: 'Salary advance', other: 'Other' } }],
+    employee: ['Employee', 'text'], advanceDeducted: ['Advance taken off (₱)', 'money'],
+    method: ['Paid by', 'choice', { options: { cash: 'Cash', check: 'Check', online: 'Online' }, optional: 'Cash (older record)' }],
   };
   const OVERRIDES = {
-    'SupplierPayments.refillId': ['Bill', 'text', { hint: 'Refiller trip # or P + the stock change # of new tanks bought.' }],
-    'Payments.receiptId': ['Receipt #', 'text'],
+    'SupplierPayments.refillId': ['Bill', 'text', { hint: 'Refiller trip #, P + the stock change # of new tanks bought, or O + the supplier # for what was owed on the start date.' }],
+    'Payments.receiptId': ['Receipt #', 'text', { hint: 'O + the customer # for a payment on their starting balance.' }],
+    'Refills.start': ['Already there on the start date', 'yesno'],
+    'TankDeposits.kind': ['What happened', 'choice', { options: { in: 'Left with the store', back: 'Given back', used: 'Used as the empty on a sale' } }],
+    'TankDeposits.receiptId': ['Receipt #', 'text', { hint: 'Only when used as the empty on a sale.' }],
+    'StartingBalances.kind': ['What', 'choice', { options: { start: 'Start date', cash: 'Cash on hand', loaded: 'Tanks with load', empty: 'Empty tanks',
+      refiller: 'At the refiller', 'customer-money': 'Customer owes money', 'customer-tanks': 'Customer has our tanks', deposit: 'Customer tank kept',
+      supplier: 'Owed to supplier', advance: 'Salary advance owed' } }],
+    'StartingBalances.ref': ['Customer, supplier or employee', 'text', { hint: 'Customer # or supplier # (employee name for an advance).' }],
+    'StartingBalances.lpgId': ['Product', 'ref', { ref: 'LPGs', optional: 'None' }],
+    'StartingBalances.trip': ['Refiller trip #', 'text'],
     'StaffPaybacks.staff': ['Paid back to', 'staff'],
+    'Payments.method': ['Paid with', 'choice', { options: { cash: 'Cash', gcash: 'GCash' }, optional: 'Cash (older record)' }],
   };
   const meta = (table, name) => {
     const [label, kind, opts] = OVERRIDES[table + '.' + name] || FIELDS[name] || [name, 'text'];
@@ -605,37 +638,49 @@
 
   // ------------------------------------------------------------------ stats
 
-  for (const chip of document.querySelectorAll('[data-range]')) {
+  for (const chip of document.querySelectorAll('[data-period]')) {
     chip.addEventListener('click', () => {
-      state.range = chip.dataset.range;
-      try { localStorage.setItem('lpg-admin-range', state.range); } catch (_) { /* ignore */ }
+      state.period = chip.dataset.period;
+      try { localStorage.setItem('lpg-admin-period', state.period); } catch (_) { /* ignore */ }
       markRange();
       loadStats();
     });
   }
 
+  for (const chip of document.querySelectorAll('[data-sup-period]')) {
+    chip.addEventListener('click', () => {
+      state.supPeriod = chip.dataset.supPeriod;
+      try { localStorage.setItem('lpg-admin-sup-period', state.supPeriod); } catch (_) { /* ignore */ }
+      markRange();
+      loadStats();
+    });
+  }
+
+  $('sup-supplier').addEventListener('change', (e) => {
+    state.supplier = e.target.value;
+    try { localStorage.setItem('lpg-admin-supplier', state.supplier); } catch (_) { /* ignore */ }
+    loadStats();
+  });
+
   function markRange() {
-    for (const c of document.querySelectorAll('[data-range]')) c.setAttribute('aria-pressed', String(c.dataset.range === state.range));
+    for (const c of document.querySelectorAll('[data-sup-period]')) c.setAttribute('aria-pressed', String(c.dataset.supPeriod === state.supPeriod));
+    for (const c of document.querySelectorAll('[data-period]')) c.setAttribute('aria-pressed', String(c.dataset.period === state.period));
   }
 
   function renderStats() {
     const s = state.stats;
     const t = s.totals, p = s.previous;
-    $('kpi-revenue').textContent = UI.pesoRound.format(t.revenue);
     $('kpi-count').textContent = count.format(t.count);
     $('kpi-qty').textContent = count.format(t.qty);
     $('kpi-avg').textContent = peso.format(t.avg);
     $('kpi-customers').textContent = count.format(t.customers);
-    delta($('kpi-revenue-delta'), t.revenue, p && p.revenue, s.compare);
     delta($('kpi-count-delta'), t.count, p && p.count, s.compare);
     delta($('kpi-qty-delta'), t.qty, p && p.qty, s.compare);
     delta($('kpi-avg-delta'), t.avg, p && p.avg, s.compare);
     delta($('kpi-customers-delta'), t.customers, p && p.customers, s.compare);
     $('kpi-collected').textContent = UI.pesoRound.format(t.collected);
     delta($('kpi-collected-delta'), t.collected, p && p.collected, s.compare);
-    $('kpi-supplier').textContent = UI.pesoRound.format(t.supplierPaid);
-    delta($('kpi-supplier-delta'), t.supplierPaid, p && p.supplierPaid, s.compare, true);
-    $('kpi-supplier-note').textContent = t.supplierPaidStaff ? `${peso.format(t.supplierPaidSales)} from sales · ${peso.format(t.supplierPaidStaff)} staff money` : t.supplierPaid ? 'All from sales' : '';
+    $('kpi-collected-note').textContent = t.collected ? `${peso.format(t.collected - t.collectedGcash)} cash · ${peso.format(t.collectedGcash)} GCash` : '';
     $('kpi-profit').textContent = t.profit == null ? '—' : UI.pesoRound.format(t.profit);
     delta($('kpi-profit-delta'), t.profit, p && p.profit, s.compare);
     // Profit = sales − each tank's refill (or new-tank) cost. Products without a cost can't be counted.
@@ -643,11 +688,6 @@
       ? (s.uncosted.length ? `Set a refill cost in Products for ${s.uncosted.join(', ')}` : '')
       : s.uncosted.length ? `Leaves out ${s.uncosted.join(', ')} (no refill cost set)`
       : `${t.costedRevenue ? Math.round(t.profit / t.costedRevenue * 100) : 0}% of sales`;
-
-    const per = { hour: 'hour', day: 'day', month: 'month' }[s.bucket];
-    $('trend-title').textContent = `Revenue by ${per}`;
-    $('trend-sub').textContent = s.range === 'today' ? 'Today, hour by hour' : s.range === 'all' ? `Since ${fmtDate(s.start)}` : `${fmtDate(s.start)} – today`;
-    renderTrend();
 
     hbars($('by-product'), s.byProduct, (r) => `${count.format(r.qty)} cylinder${r.qty === 1 ? '' : 's'} · ${count.format(r.count)} receipt${r.count === 1 ? '' : 's'}${r.profit != null ? ` · ≈${UI.pesoRound.format(r.profit)} profit` : ''}`, 'No sales in this period.');
     hbars($('by-staff'), s.byStaff, (r) => `${count.format(r.count)} receipt${r.count === 1 ? '' : 's'}`, 'No sales in this period.');
@@ -668,6 +708,82 @@
     tickUpdated();
   }
 
+  // Revenue card: today, this month or this quarter so far, against the previous one up to the same point.
+  const PERIODS = {
+    day: { label: 'Revenue today', title: 'Revenue by day', sub: 'Last 30 days', compare: 'vs same time yesterday' },
+    month: { label: 'Revenue this month', title: 'Revenue by month', sub: 'Last 12 months', compare: 'vs same point last month' },
+    quarter: { label: 'Revenue this quarter', title: 'Revenue by quarter', sub: 'Last 8 quarters', compare: 'vs same point last quarter' },
+  };
+
+  function renderRevenue() {
+    const r = state.revenue;
+    if (!r) return;
+    const p = PERIODS[r.period];
+    $('revenue-label').textContent = p.label;
+    $('period-revenue').textContent = UI.pesoRound.format(r.current.revenue);
+    delta($('period-revenue-delta'), r.current.revenue, r.previous.revenue, p.compare);
+    $('trend-title').textContent = p.title;
+    $('trend-sub').textContent = p.sub;
+    renderTrend();
+  }
+
+  // Supplier summary: the same periods, for refill trips, tanks and money paid out.
+  const SUP_PERIODS = {
+    day: { now: 'today', compare: 'vs same time yesterday', head: 'Day' },
+    month: { now: 'this month', compare: 'vs same point last month', head: 'Month' },
+    quarter: { now: 'this quarter', compare: 'vs same point last quarter', head: 'Quarter' },
+  };
+
+  function renderSuppliers() {
+    const s = state.suppliers;
+    if (!s) return;
+    const p = SUP_PERIODS[s.period], c = s.current, v = s.previous;
+    const tanks = (n) => `${count.format(n)} tank${n === 1 ? '' : 's'}`;
+    // A supplier that was deleted (or not loaded yet) falls back to all suppliers.
+    const pick = $('sup-supplier');
+    const ids = s.suppliers.map((x) => x.id).join(',');
+    if (pick.dataset.ids !== ids) {
+      pick.dataset.ids = ids;
+      clear(pick, h('option', { value: '' }, 'All suppliers'), s.suppliers.map((x) => h('option', { value: x.id }, x.name)));
+    }
+    pick.value = s.supplierId;
+    const one = s.suppliers.find((x) => x.id === s.supplierId);
+    $('sup-sub').textContent = `${one ? one.name : 'All suppliers'}: refill trips, tanks and money ${p.now}`;
+    $('sup-billed').textContent = UI.pesoRound.format(c.billed);
+    delta($('sup-billed-delta'), c.billed, v.billed, p.compare, true);
+    $('sup-paid').textContent = UI.pesoRound.format(c.paid);
+    delta($('sup-paid-delta'), c.paid, v.paid, p.compare, true);
+    $('sup-how-title').textContent = `How it was paid, ${p.now}`;
+    clear($('sup-how'), [['Cash', c.paidCash, 'sup-cash'], ['Check', c.paidCheck, 'sup-check'], ['Online', c.paidOnline || 0, 'sup-online'], ['Owner’s personal money', c.paidOwner, 'sup-owner'],
+      ['Staff’s own money', c.paidStaff, 'sup-staff'], ['Pay later (still unpaid of this period’s bills)', c.unpaid, 'sup-unpaid']]
+      .map(([label, amount, metric]) => h('div', { class: 'sup-how-item' }, h('span', { class: 'muted' }, label),
+        Explain.mark(h('strong', { class: 'num', 'data-explain': metric }, peso.format(amount))))));
+    $('sup-trips').textContent = count.format(c.trips);
+    delta($('sup-trips-delta'), c.trips, v.trips, p.compare);
+    $('sup-refilled').textContent = count.format(c.refilled);
+    delta($('sup-refilled-delta'), c.refilled, v.refilled, p.compare);
+    $('sup-refilled-note').textContent = [c.sent ? `${tanks(c.sent)} sent` : '', c.rejected ? `${tanks(c.rejected)} back unfilled` : ''].filter(Boolean).join(' · ');
+    $('sup-bought').textContent = count.format(c.bought);
+    delta($('sup-bought-delta'), c.bought, v.bought, p.compare);
+
+    const heads = ['Trips', 'Back with load', 'New tanks', 'Cost', 'Cash', 'Check', 'Online', 'Owner’s money', 'Staff money', 'Pay later'];
+    const cells = (r) => [count.format(r.trips), count.format(r.refilled), count.format(r.bought), peso.format(r.billed),
+      peso.format(r.paidCash), peso.format(r.paidCheck), peso.format(r.paidOnline || 0), peso.format(r.paidOwner), peso.format(r.paidStaff), peso.format(r.unpaid)]
+      .map((t) => h('td', { class: 'right num' }, t));
+    const table = (first, rows, label) => h('table', {},
+      h('thead', {}, h('tr', {}, h('th', {}, first), heads.map((t) => h('th', { class: 'right' }, t)))),
+      h('tbody', {}, rows.map((r) => h('tr', {}, h('td', {}, label(r)), cells(r)))));
+
+    $('sup-by-title').textContent = `By supplier, ${p.now}`;
+    $('sup-by-title').hidden = $('sup-by-supplier').hidden = !!one;
+    clear($('sup-by-supplier'), s.bySupplier.length ? table('Supplier', s.bySupplier, (r) => r.name)
+      : h('div', { class: 'empty' }, `Nothing with suppliers ${p.now}.`));
+    const active = s.series.filter((r) => r.trips || r.sent || r.refilled || r.rejected || r.bought || r.billed || r.paid || r.unpaid).reverse();
+    $('sup-history-title').textContent = { day: 'Last 30 days', month: 'Last 12 months', quarter: 'Last 8 quarters' }[s.period];
+    clear($('sup-history'), active.length ? table(p.head, active, (r) => bucketLabel(r.key, s.period, s.period !== 'day'))
+      : h('div', { class: 'empty' }, 'Nothing with suppliers in this time.'));
+  }
+
   $('trend-toggle').addEventListener('click', () => {
     state.table = !state.table;
     $('trend-toggle').setAttribute('aria-pressed', String(state.table));
@@ -676,17 +792,18 @@
   });
 
   function renderTrend() {
-    const s = state.stats;
+    const s = state.revenue;
     if (!s) return;
     $('trend-chart').hidden = state.table;
     $('trend-table').hidden = !state.table;
     if (state.table) {
       const rows = [...s.series].reverse();
       clear($('trend-table'), h('table', {},
-        h('thead', {}, h('tr', {}, h('th', {}, s.bucket === 'hour' ? 'Hour' : s.bucket === 'month' ? 'Month' : 'Day'), h('th', { class: 'right' }, 'Receipts'), h('th', { class: 'right' }, 'Cylinders'), h('th', { class: 'right' }, 'Revenue'))),
-        h('tbody', {}, rows.map((r) => h('tr', {}, h('td', {}, bucketLabel(r.key, s.bucket, true)), h('td', { class: 'right num' }, count.format(r.count)), h('td', { class: 'right num' }, count.format(r.qty)), h('td', { class: 'right num' }, peso.format(r.revenue)))))));
+        h('thead', {}, h('tr', {}, h('th', {}, { day: 'Day', month: 'Month', quarter: 'Quarter' }[s.period]), h('th', { class: 'right' }, 'Receipts'), h('th', { class: 'right' }, 'Cylinders'), h('th', { class: 'right' }, 'Revenue'), h('th', { class: 'right' }, 'Cash in'), h('th', { class: 'right' }, 'GCash in'))),
+        h('tbody', {}, rows.map((r) => h('tr', {}, h('td', {}, bucketLabel(r.key, s.period, true)), h('td', { class: 'right num' }, count.format(r.count)), h('td', { class: 'right num' }, count.format(r.qty)), h('td', { class: 'right num' }, peso.format(r.revenue)),
+          h('td', { class: 'right num' }, peso.format(r.cash)), h('td', { class: 'right num' }, peso.format(r.gcash)))))));
     } else {
-      columnChart($('trend-chart'), s.series, s.bucket);
+      columnChart($('trend-chart'), s.series, s.period);
     }
   }
 
@@ -700,6 +817,43 @@
 
   let resizeTimer;
   new ResizeObserver(() => { clearTimeout(resizeTimer); resizeTimer = setTimeout(renderTrend, 80); }).observe($('trend-chart'));
+
+  // ------------------------------------------------------------------ tabs and clickable figures
+
+  // Customers, Suppliers, Money, or Store & staff; the choice is remembered on this computer.
+  let money = null;
+  function showTab(tab) {
+    if (!['customers', 'suppliers', 'money', 'store'].includes(tab)) tab = 'customers';
+    for (const b of document.querySelectorAll('[data-tab]')) {
+      b.setAttribute('aria-selected', String(b.dataset.tab === tab));
+      b.tabIndex = b.dataset.tab === tab ? 0 : -1;
+    }
+    for (const p of document.querySelectorAll('[data-panel]')) {
+      p.hidden = p.dataset.panel !== tab;
+      p.setAttribute('aria-labelledby', 'tab-button-' + p.dataset.panel);
+      p.tabIndex = 0;
+    }
+    try { localStorage.setItem('lpg-admin-tab', tab); } catch (_) { /* storage blocked */ }
+    if (tab === 'customers') renderTrend(); // the chart needs a visible width
+    // Money (cash on hand, expenses) is read-only here; expenses are entered in the POS dashboard.
+    if (tab === 'money') {
+      if (!money) money = Reports.mountMoney($('money-report'), (q) => request('GET', '/api/reports/money?' + new URLSearchParams(q)));
+      else money.refresh();
+    }
+  }
+  for (const b of document.querySelectorAll('[data-tab]')) b.addEventListener('click', () => showTab(b.dataset.tab));
+  let savedTab = 'customers';
+  try { savedTab = localStorage.getItem('lpg-admin-tab') || 'customers'; } catch (_) { /* storage blocked */ }
+  showTab(savedTab);
+
+  // Supplier figures follow the supplier card's period and picker, revenue-card figures its switch, the rest the range chips.
+  Explain.bind(document.querySelector('main'), (url) => request('GET', url), (el) => {
+    const m = el.dataset.explain;
+    if (el.dataset.date) return { date: el.dataset.date }; // a daily-summary figure
+    if (m.startsWith('sup-')) return { period: state.supPeriod, supplier: state.supplier };
+    if (m.startsWith('period-')) return { period: state.period };
+    return { range: statsRange() };
+  });
 
   markRange();
   UI.watchVersion();

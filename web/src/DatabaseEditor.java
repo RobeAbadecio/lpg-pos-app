@@ -11,14 +11,17 @@ final class DatabaseEditor {
         SCHEMAS.put("Customers", "id,firstName,lastName,contactNo,address");
         SCHEMAS.put("LPGs", "id,brand,price,weight,reorderLevel,tankPrice,refillCost,tankCost,swapFee");
         SCHEMAS.put("Transactions", "id,customerId,lpgId,dateTime,qty,unitPrice,staff,returnedEmpty,receiptId,emptyLpgId,remark,owesTank,swapFee");
-        SCHEMAS.put("Receipts", "id,dateTime,customerId,staff,discount,paidAtSale,note");
-        SCHEMAS.put("Payments", "id,dateTime,receiptId,customerId,amount,staff,note");
+        SCHEMAS.put("Receipts", "id,dateTime,customerId,staff,discount,paidAtSale,note,payMethod");
+        SCHEMAS.put("Payments", "id,dateTime,receiptId,customerId,amount,staff,note,method");
         SCHEMAS.put("StockMovements", "id,dateTime,lpgId,type,loadedDelta,emptyDelta,staff,note,damagedDelta,refillerDelta,refillId,unitCost");
         SCHEMAS.put("Suppliers", "id,name,contact,brand,note");
-        SCHEMAS.put("Refills", "id,dateTime,supplierId,staff,note");
-        SCHEMAS.put("SupplierPayments", "id,dateTime,supplierId,refillId,kind,amount,staff,note,source,paidBy");
+        SCHEMAS.put("Refills", "id,dateTime,supplierId,staff,note,start");
+        SCHEMAS.put("SupplierPayments", "id,dateTime,supplierId,refillId,kind,amount,staff,note,source,paidBy,method");
         SCHEMAS.put("StaffPaybacks", "id,dateTime,staff,amount,recordedBy,note");
         SCHEMAS.put("TankReturns", "id,dateTime,customerId,lpgId,qty,staff,remark");
+        SCHEMAS.put("Expenses", "id,dateTime,category,amount,employee,method,recordedBy,note,advanceDeducted");
+        SCHEMAS.put("TankDeposits", "id,dateTime,customerId,lpgId,qty,kind,staff,note,receiptId");
+        SCHEMAS.put("StartingBalances", "id,dateTime,kind,ref,lpgId,qty,amount,trip,staff,note");
     }
     static String[] fields(String table) {
         String schema = SCHEMAS.get(table);
@@ -64,25 +67,33 @@ final class DatabaseEditor {
             if (v.length() > 4000 || v.indexOf('\0') >= 0) throw new Http.Error(400, name + " is too long or contains invalid characters");
             if (name.equals("dateTime") && (v.isBlank() || !validTime(v)))
                 throw new Http.Error(400, "Enter a valid date/time: yyyy-MM-dd HH:mm:ss");
-            if (Set.of("returnedEmpty", "owesTank").contains(name) && !v.isEmpty() && !v.equals("0") && !v.equals("1"))
+            if (Set.of("returnedEmpty", "owesTank", "start").contains(name) && !v.isEmpty() && !v.equals("0") && !v.equals("1"))
                 throw new Http.Error(400, name + " must be 0, 1, or blank");
-            if (name.equals("source") && !Set.of("", "sales", "staff").contains(v)) throw new Http.Error(400, "Source must be sales or staff");
-            if (Set.of("price", "weight", "reorderLevel", "tankPrice", "refillCost", "tankCost", "swapFee", "qty", "unitPrice", "discount", "paidAtSale", "amount", "loadedDelta", "emptyDelta", "damagedDelta", "refillerDelta", "unitCost").contains(name)) {
+            if (name.equals("source") && !Set.of("", "sales", "owner", "staff").contains(v)) throw new Http.Error(400, "Source must be sales, owner or staff");
+            if (name.equals("method") && Set.of("SupplierPayments", "Expenses").contains(table) && !Set.of("", "cash", "check", "online").contains(v))
+                throw new Http.Error(400, "Method must be cash, check or online");
+            if (name.equals("category") && !DataStore.EXPENSE_CATEGORIES.contains(v)) throw new Http.Error(400, "Category must be gasoline, salary, advance or other");
+            if ((name.equals("payMethod") || (name.equals("method") && table.equals("Payments"))) && !Set.of("", "cash", "gcash").contains(v))
+                throw new Http.Error(400, name + " must be cash or gcash");
+            if (Set.of("price", "weight", "reorderLevel", "tankPrice", "refillCost", "tankCost", "swapFee", "qty", "unitPrice", "discount", "paidAtSale", "amount", "advanceDeducted", "loadedDelta", "emptyDelta", "damagedDelta", "refillerDelta", "unitCost").contains(name)) {
                 if (v.isEmpty()) {
-                    if (Set.of("qty", "amount", "weight", "price").contains(name)) throw new Http.Error(400, name + " is required");
+                    if (Set.of("qty", "amount", "weight", "price").contains(name) && !table.equals("StartingBalances")) throw new Http.Error(400, name + " is required");
                     continue;
                 }
                 try {
                     double n = Double.parseDouble(v);
                     if (!Double.isFinite(n) || Math.abs(n) > 1_000_000_000 || (!name.endsWith("Delta") && n < 0)
                             || (Set.of("qty", "reorderLevel", "loadedDelta", "emptyDelta", "damagedDelta", "refillerDelta").contains(name) && n != Math.rint(n))
-                            || (Set.of("qty", "weight", "amount").contains(name) && n <= 0)) throw new NumberFormatException();
+                            || ((Set.of("qty", "weight").contains(name) || (name.equals("amount") && !table.equals("Expenses"))) && n <= 0 && !table.equals("StartingBalances"))) throw new NumberFormatException();
                 } catch (NumberFormatException e) { throw new Http.Error(400, "Invalid " + name); }
             }
         }
         if (table.equals("StockMovements") && !Set.of("count", "damaged", "other", "delivery", "purchase", "condition", "refill-send", "refill-receive", "refill-reject").contains(row[3]))
             throw new Http.Error(400, "Invalid stock movement type");
-        if (table.equals("SupplierPayments") && !Set.of("refill", "purchase").contains(row[4])) throw new Http.Error(400, "Payment kind must be refill or purchase");
+        if (table.equals("SupplierPayments") && !Set.of("refill", "purchase", "start").contains(row[4])) throw new Http.Error(400, "Payment kind must be refill, purchase or start");
+        if (table.equals("TankDeposits") && !Set.of("in", "back", "used").contains(row[5])) throw new Http.Error(400, "Kind must be in, back or used");
+        if (table.equals("StartingBalances") && !Set.of("start", "cash", "loaded", "empty", "refiller", "customer-money", "customer-tanks", "deposit", "supplier", "advance").contains(row[2]))
+            throw new Http.Error(400, "Invalid starting balance kind");
         if (table.equals("StaffPaybacks") && row[2].isBlank()) throw new Http.Error(400, "Staff name is required");
         if (table.equals("LPGs") && row[1].isBlank()) throw new Http.Error(400, "Brand is required");
         if (table.equals("Suppliers") && row[1].isBlank()) throw new Http.Error(400, "Supplier name is required");
@@ -119,13 +130,18 @@ final class DatabaseEditor {
                     String v = value(row, i);
                     switch (names[i]) {
                         case "customerId" -> ref(errors, key, v, customers, false);
-                        case "lpgId" -> ref(errors, key, v, products, false);
+                        case "lpgId" -> ref(errors, key, v, products, e.getKey().equals("StartingBalances"));
                         case "emptyLpgId" -> ref(errors, key, v, products, true);
                         case "supplierId" -> ref(errors, key, v, suppliers, false);
-                        case "receiptId" -> ref(errors, key, v, receipts, e.getKey().equals("Transactions"));
+                        case "receiptId" -> {
+                            // A customer's starting balance is paid as receipt "O" + customer id.
+                            if (e.getKey().equals("Payments") && v.startsWith("O")) ref(errors, key, v.substring(1), customers, false);
+                            else ref(errors, key, v, receipts, e.getKey().equals("Transactions") || e.getKey().equals("TankDeposits"));
+                        }
                         case "refillId" -> {
                             if (!v.isEmpty()) {
                                 if (e.getKey().equals("SupplierPayments") && v.startsWith("P")) ref(errors, key, v.substring(1), ids(data, "StockMovements"), false);
+                                else if (e.getKey().equals("SupplierPayments") && v.startsWith("O")) ref(errors, key, v.substring(1), suppliers, false);
                                 else ref(errors, key, v, trips, false);
                             }
                         }
@@ -135,7 +151,7 @@ final class DatabaseEditor {
                     ref(errors, key, row[0], receipts, false);
                     if (!Objects.equals(value(row, 2), receiptCustomer.get(row[0]))) errors.put(key + " customer differs from sale", 1.0);
                 }
-                if (e.getKey().equals("Payments") && !Objects.equals(value(row, 3), receiptCustomer.get(value(row, 2)))) errors.put(key + " customer differs from receipt", 1.0);
+                if (e.getKey().equals("Payments") && !Objects.equals(value(row, 3), value(row, 2).startsWith("O") ? value(row, 2).substring(1) : receiptCustomer.get(value(row, 2)))) errors.put(key + " customer differs from receipt", 1.0);
             }
         }
         Path stage = Files.createTempDirectory("lpg-record-validation-");
@@ -148,10 +164,13 @@ final class DatabaseEditor {
                 int[] counts = {s.loaded(), s.empty(), s.damaged(), s.atRefiller()};
                 for (int i = 0; i < counts.length; i++) if (counts[i] < 0) errors.put("Product #" + e.getKey() + " has negative " + labels[i] + " stock", (double) -counts[i]);
             }
-            Map<String, Integer> owed = new HashMap<>();
-            for (DataStore.Line l : trial.lines()) if (l.owesTank()) owed.merge(l.customerId(), l.qty(), Integer::sum);
-            for (DataStore.TankReturn t : trial.tankReturns()) owed.merge(t.customerId(), -t.qty(), Integer::sum);
-            owed.forEach((id, n) -> { if (n < 0) errors.put("Customer #" + id + " returned more tanks than owed", (double) -n); });
+            Set<String> customerIds = new HashSet<>();
+            for (DataStore.Line l : trial.lines()) customerIds.add(l.customerId());
+            for (DataStore.TankReturn t : trial.tankReturns()) customerIds.add(t.customerId());
+            for (String id : customerIds) {
+                int n = trial.owedCount(id);
+                if (n < 0) errors.put("Customer #" + id + " returned more tanks than owed", (double) -n);
+            }
             var rs = trial.receipts(); var paid = trial.paidByReceipt(rs);
             for (DataStore.Receipt r : rs) {
                 if (r.discount() > r.subtotal() + .005) errors.put("Receipt #" + r.id() + " discount exceeds subtotal", r.discount() - r.subtotal());

@@ -1,28 +1,29 @@
 /* Shared tokens + components for the POS app and the admin dashboard. */
 :root {
   color-scheme: light;
-  --page: #f9f9f7;
-  --surface: #fcfcfb;
-  --surface-2: #f3f2ee;
-  --ink: #0b0b0b;
-  --ink-2: #52514e;
-  --muted: #74726c;
-  --grid: #e1e0d9;
+  --page: #f3f5f8;
+  --surface: #ffffff;
+  --surface-2: #edf1f6;
+  --ink: #182538;
+  --ink-2: #455469;
+  --muted: #5e6b7b;
+  --grid: #dfe5ed;
   --axis: #c3c2b7;
   --border: rgba(11, 11, 11, 0.10);
   --border-strong: rgba(11, 11, 11, 0.18);
-  --accent: #2a78d6;
-  --accent-ink: #1c5cab;
+  --accent: #2167bd;
+  --accent-ink: #1857a4;
   --accent-wash: rgba(42, 120, 214, 0.10);
   --on-accent: #ffffff;
   --series-1: #2a78d6;
   --good: #0ca30c;
   --good-ink: #006300;
-  --critical: #d03b3b;
+  --critical: #bd3030;
+  --on-critical: #ffffff;
   --critical-wash: rgba(208, 59, 59, 0.10);
   --warning: #fab219;
   --warning-ink: #8a5a00;
-  --shadow: 0 1px 2px rgba(11, 11, 11, 0.04), 0 8px 24px rgba(11, 11, 11, 0.06);
+  --shadow: none;
   --radius: 12px;
   --radius-sm: 8px;
   --font: system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -45,15 +46,18 @@
     --accent-ink: #86b6ef;
     --accent-wash: rgba(57, 135, 229, 0.16);
     --series-1: #3987e5;
-    --good-ink: #0ca30c;
+    --good-ink: #73d780;
+    --critical: #ff9292;
+    --on-critical: #351414;
+    --on-accent: #0d1725;
     --warning-ink: #fab219;
     --critical-wash: rgba(208, 59, 59, 0.18);
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow: none;
   }
 }
 
 *, *::before, *::after { box-sizing: border-box; }
-html { -webkit-text-size-adjust: 100%; }
+html { -webkit-text-size-adjust: 100%; scroll-padding-top: 90px; }
 body {
   margin: 0;
   background: var(--page);
@@ -66,6 +70,10 @@ h1, h2, h3 { margin: 0; line-height: 1.2; }
 h2 { font-size: 15px; font-weight: 600; }
 a { color: var(--accent-ink); }
 button, input, select { font: inherit; color: inherit; }
+button, input, select, summary, [tabindex] { scroll-margin-block: 90px 110px; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+::selection { background: var(--accent); color: var(--on-accent); }
+input, textarea { caret-color: var(--accent); }
 .num { font-variant-numeric: tabular-nums; }
 .muted { color: var(--muted); }
 .nowrap { white-space: nowrap; }
@@ -75,7 +83,7 @@ button, input, select { font: inherit; color: inherit; }
 /* Buttons */
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
-  min-height: 38px; padding: 0 14px;
+  min-height: 42px; padding: 0 14px;
   border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
   background: var(--surface); color: var(--ink);
   font-weight: 500; cursor: pointer; white-space: nowrap; text-decoration: none;
@@ -88,13 +96,13 @@ button, input, select { font: inherit; color: inherit; }
 .btn.primary:hover { filter: brightness(1.06); }
 .btn.danger { color: var(--critical); }
 .btn.danger:hover { background: var(--critical-wash); }
-.btn.destructive { background: var(--critical); border-color: var(--critical); color: #fff; }
+.btn.destructive { background: var(--critical); border-color: var(--critical); color: var(--on-critical); }
 .btn.destructive:hover { filter: brightness(1.06); }
 .btn.ghost { border-color: transparent; background: transparent; }
 .btn.ghost:hover { background: var(--surface-2); }
-.btn.small { min-height: 30px; padding: 0 10px; font-size: 13px; }
+.btn.small { min-height: 34px; padding: 0 10px; font-size: 13px; }
 /* Touch screens: small buttons still get a comfortable tap target. */
-@media (pointer: coarse) { .btn.small { min-height: 40px; padding: 0 12px; } }
+@media (pointer: coarse) { .btn.small { min-height: 44px; padding: 0 12px; } }
 .btn.block { width: 100%; }
 .btn.lg { min-height: 48px; font-size: 16px; }
 
@@ -102,7 +110,7 @@ button, input, select { font: inherit; color: inherit; }
 .field { display: grid; gap: 6px; }
 .field > span { font-size: 13px; font-weight: 500; color: var(--ink-2); }
 .input {
-  width: 100%; min-height: 40px; padding: 8px 12px;
+  width: 100%; min-height: 44px; padding: 10px 12px;
   border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
   background: var(--surface); outline: none;
 }
@@ -124,11 +132,13 @@ button, input, select { font: inherit; color: inherit; }
 /* Tables */
 .table-wrap { overflow-x: auto; margin: 0 -18px; padding: 0 18px; }
 table { width: 100%; border-collapse: collapse; font-size: 14px; }
-th { text-align: left; font-weight: 500; font-size: 12px; color: var(--muted); padding: 8px 10px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+th { text-align: left; font-weight: 600; font-size: 12px; color: var(--ink-2); padding: 10px; border-bottom: 1px solid var(--grid); white-space: nowrap; background: var(--surface-2); }
 td { padding: 10px; border-bottom: 1px solid var(--grid); vertical-align: middle; }
 tr:last-child td { border-bottom: 0; }
 td.right, th.right { text-align: right; }
 td.actions { text-align: right; white-space: nowrap; }
+table .num, table td.right { font-variant-numeric: tabular-nums; }
+tbody tr:hover td { background: var(--surface-2); }
 .empty { padding: 28px 12px; text-align: center; color: var(--muted); }
 
 /* Pills / status */
@@ -150,12 +160,40 @@ td.actions { text-align: right; white-space: nowrap; }
   opacity: 0; pointer-events: none; transition: opacity .18s, transform .18s; z-index: 50;
 }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
-.toast.error { background: var(--critical); color: #fff; }
+.toast.error { background: var(--critical); color: var(--on-critical); }
+.toast.has-action { pointer-events: auto; display: flex; align-items: center; gap: 14px; }
+.toast-action {
+  flex: none; min-height: 36px; padding: 6px 14px; border: 1px solid currentColor; border-radius: 8px;
+  background: transparent; color: inherit; font: inherit; font-weight: 700; cursor: pointer;
+}
+.toast-action:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }
+/* Asked before a dialog with typed-in values closes without saving. */
+.discard-bar {
+  position: sticky; bottom: 0; margin: 12px -4px 0; padding: 12px; border: 1px solid var(--critical);
+  border-radius: 10px; background: var(--surface); display: grid; gap: 10px; font-weight: 600;
+}
+.discard-bar[hidden] { display: none; }
+/* No connection to the POS server: nothing can be saved until it's back. */
+.offline-bar {
+  position: sticky; top: 0; z-index: 40; padding: 10px 16px; background: var(--critical); color: var(--on-critical);
+  font-weight: 600; text-align: center;
+}
+.offline-bar[hidden] { display: none; }
 
 /* Modal */
 dialog.modal {
   width: min(460px, calc(100vw - 32px)); padding: 0; border: 1px solid var(--border);
   border-radius: 14px; background: var(--surface); color: var(--ink); box-shadow: 0 20px 60px rgba(0, 0, 0, .25);
+}
+dialog.modal { max-height: calc(100dvh - 32px); overflow-y: auto; }
+.skip-link { position: fixed; top: 8px; left: 16px; z-index: 100; padding: 12px 18px; background: var(--surface); color: var(--accent-ink); transform: translateY(-180%); border: 1px solid var(--accent); border-radius: var(--radius-sm); }
+.skip-link:focus { transform: none; }
+.page-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; margin-bottom: 20px; }
+.page-heading h1 { font-size: 26px; font-weight: 650; letter-spacing: -.02em; }
+.page-heading .muted { font-size: 13px; }
+@media (pointer: coarse) { .input { font-size: 16px; } }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
 }
 dialog.modal.wide { width: min(640px, calc(100vw - 32px)); }
 dialog.modal::backdrop { background: rgba(0, 0, 0, .35); }

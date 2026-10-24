@@ -1,5 +1,6 @@
-// Daily summary, shared by the POS dashboard and the admin dashboard: one day's sales, money in
-// and out (and whose money paid the suppliers), tanks moved, that day's receipts, and the days before.
+// Daily summary, shared by the POS dashboard and the admin dashboard: one day at a glance (sales, money
+// in and out, cash on hand), tanks moved, that day's receipts, and the days before. The details of
+// sales, suppliers and money are in their own views (shared/reports.js).
 (function () {
   const { h, clear, peso, count, fmtTime } = UI;
   const plural = (n, word) => `${count.format(n)} ${word}${n === 1 ? '' : 's'}`;
@@ -18,8 +19,11 @@
       : { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
   }
 
-  const tile = (label, value, note) => h('div', { class: 'card tile' },
-    h('div', { class: 'label' }, label), h('div', { class: 'value' }, value), note ? h('div', { class: 'tile-note' }, note) : null);
+  // metric: the figure the value explains when clicked (see shared/explain.js), for that day.
+  const tile = (label, value, note, metric, date) => h('div', { class: 'card tile' },
+    h('div', { class: 'label' }, label),
+    metric && window.Explain ? Explain.mark(h('div', { class: 'value', 'data-explain': metric, 'data-date': date }, value)) : h('div', { class: 'value' }, value),
+    note ? h('div', { class: 'tile-note' }, note) : null);
   const row = (label, value, cls) => h('div', { class: 'owe-row' + (cls ? ' ' + cls : '') }, h('span', {}, label), h('strong', { class: 'num' }, value));
 
   // container: where to draw. load(date) returns the /api/daily data for that date ('' = today).
@@ -53,16 +57,22 @@
 
       const profit = t.profit == null ? '—' : UI.pesoRound.format(t.profit);
       const tiles = h('div', { class: 'kpis' },
-        tile('Sales', UI.pesoRound.format(t.revenue), `${plural(t.receipts, 'receipt')} · ${plural(t.tanks, 'tank')}`),
+        tile('Sales', UI.pesoRound.format(t.revenue), `${plural(t.receipts, 'receipt')} · ${plural(t.tanks, 'tank')}`, 'revenue', d.date),
         tile('Cash from customers', UI.pesoRound.format(t.collected),
-          t.collectedLater ? `${peso.format(t.collectedAtSale)} at sale · ${peso.format(t.collectedLater)} paid later` : 'All at the sale'),
+          [t.collectedLater ? `${peso.format(t.collectedAtSale)} at sale · ${peso.format(t.collectedLater)} paid later` : 'All at the sale',
+            t.collectedGcash ? `${peso.format(t.collectedGcash)} by GCash` : ''].filter(Boolean).join(' · '), 'collected', d.date),
         tile('Paid to suppliers', UI.pesoRound.format(t.paidSuppliers),
-          t.paidStaff ? `${peso.format(t.paidSales)} from sales · ${peso.format(t.paidStaff)} staff money` : t.paidSuppliers ? 'All from sales' : 'Nothing paid'),
-        tile('Cash left from sales', UI.pesoRound.format(t.cashLeft), 'Cash in − paid from sales − paid back to staff'),
-        tile('Gross profit (est.)', profit, t.profit == null ? 'Set refill costs in Products' : d.uncosted.length ? `Leaves out ${d.uncosted.join(', ')}` : null));
+          t.paidStaff || t.paidOwner ? [`${peso.format(t.paidSales)} from sales`, t.paidOwner ? `${peso.format(t.paidOwner)} owner’s money` : '', t.paidStaff ? `${peso.format(t.paidStaff)} staff money` : ''].filter(Boolean).join(' · ')
+            : t.paidSuppliers ? 'All from sales' : 'Nothing paid', 'supplierPaid', d.date),
+        tile('Expenses', UI.pesoRound.format(t.expenses), t.expenses ? (t.expensesCash < t.expenses ? `${peso.format(t.expensesCash)} in cash` : 'All in cash') : 'Gasoline, salaries and other costs', null, d.date),
+        tile('Cash on hand', UI.pesoRound.format(t.cashLeft), 'Cash in − cash paid to suppliers, expenses and staff', 'cashLeft', d.date),
+        // From the starting balances on: the drawer at the end of the day (start of the day + that day's cash on hand).
+        t.drawer == null ? null : tile('Cash in the drawer', UI.pesoRound.format(t.drawer),
+          t.startCash != null ? `Starting cash ${peso.format(t.startCash)} + cash on hand` : `${peso.format(t.drawerBefore)} at the start of the day + cash on hand`),
+        tile('Gross profit (est.)', profit, t.profit == null ? 'Set refill costs in Products' : d.uncosted.length ? `Leaves out ${d.uncosted.join(', ')}` : null, 'profit', d.date));
 
       const sold = h('section', { class: 'card' },
-        h('div', { class: 'card-head' }, h('div', {}, h('h2', {}, 'Tanks sold'), h('div', { class: 'sub' }, plural(t.tanks, 'tank')))),
+        h('div', { class: 'card-head' }, h('div', {}, h('h2', {}, 'Tanks sold'))),
         d.byProduct.length ? d.byProduct.map((p) => row(`${p.qty} × ${p.label}`, peso.format(p.revenue))) : h('div', { class: 'empty' }, 'No sales this day.'));
 
       const tanks = h('section', { class: 'card' },
@@ -73,16 +83,6 @@
         row('Taken without an empty', plural(t.tanksLent, 'tank')),
         row('Tanks returned by customers', plural(t.tanksReturned, 'tank')));
 
-      const money = h('section', { class: 'card' },
-        h('div', { class: 'card-head' }, h('div', {}, h('h2', {}, 'Money details'))),
-        row('Paid to suppliers from sales', peso.format(t.paidSales)),
-        row('Paid to suppliers with staff’s own money', peso.format(t.paidStaff)),
-        ...d.paidByStaff.map((s) => row(`· ${s.staff}`, peso.format(s.amount), 'sub-row')),
-        row('Paid back to staff', peso.format(t.paidBack)),
-        row('Not paid yet by customers', peso.format(t.credit)),
-        row('Discounts given', peso.format(t.discounts)),
-        row('Swap fees', peso.format(t.swapFees)));
-
       const receipts = h('section', { class: 'card' },
         h('div', { class: 'card-head' }, h('div', {}, h('h2', {}, 'Receipts'), h('div', { class: 'sub' }, plural(d.receipts.length, 'receipt')))),
         d.receipts.length ? h('div', { class: 'list' }, d.receipts.map((r) => h('div', { class: 'owe-row' },
@@ -91,11 +91,13 @@
           : h('div', { class: 'empty' }, 'No receipts this day.'));
 
       // Earlier days: tap a row to open that day.
+      const drawerCol = d.days.some((x) => x.drawer != null);
       const days = h('section', { class: 'card' },
         h('div', { class: 'card-head' }, h('div', {}, h('h2', {}, 'Previous days'), h('div', { class: 'sub' }, 'Tap a day to see its summary'))),
         h('div', { class: 'table-wrap' }, h('table', { class: 'days-table' },
           h('thead', {}, h('tr', {}, h('th', {}, 'Day'), h('th', { class: 'right' }, 'Sales'), h('th', { class: 'right opt' }, 'Tanks'),
-            h('th', { class: 'right opt' }, 'Cash in'), h('th', { class: 'right opt' }, 'Paid out'), h('th', { class: 'right' }, 'Cash left'))),
+            h('th', { class: 'right opt' }, 'Cash in'), h('th', { class: 'right opt' }, 'Suppliers'), h('th', { class: 'right opt' }, 'Expenses'), h('th', { class: 'right' }, 'Cash on hand'),
+            drawerCol ? h('th', { class: 'right opt' }, 'In the drawer') : null)),
           h('tbody', {}, d.days.map((x) => h('tr', {
             class: x.date === d.date ? 'selected' : null, tabindex: 0, 'aria-current': x.date === d.date ? 'date' : null,
             onclick: () => open(x.date), onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(x.date); } },
@@ -105,9 +107,11 @@
           h('td', { class: 'right num opt' }, count.format(x.tanks)),
           h('td', { class: 'right num opt' }, peso.format(x.collected)),
           h('td', { class: 'right num opt' }, peso.format(x.paidSuppliers)),
-          h('td', { class: 'right num' + (x.cashLeft < 0 ? ' neg' : '') }, peso.format(x.cashLeft))))))));
+          h('td', { class: 'right num opt' }, peso.format(x.expenses || 0)),
+          h('td', { class: 'right num' + (x.cashLeft < 0 ? ' neg' : '') }, peso.format(x.cashLeft)),
+          drawerCol ? h('td', { class: 'right num opt' }, x.drawer == null ? '—' : peso.format(x.drawer)) : null))))));
 
-      clear(container, nav, tiles, h('div', { class: 'dash-two' }, sold, tanks), h('div', { class: 'dash-two' }, money, receipts), days);
+      clear(container, nav, tiles, h('div', { class: 'dash-two' }, sold, tanks), receipts, days);
     }
 
     open('');

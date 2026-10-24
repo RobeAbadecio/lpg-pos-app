@@ -67,6 +67,20 @@ final class AdminApi implements Http.Handler {
             case "GET overview" -> r.json(200, overview());
             case "GET stats" -> r.json(200, Stats.compute(store, r.query().getOrDefault("range", "30")));
             case "GET daily" -> r.json(200, Stats.daily(store, r.query().getOrDefault("date", ""), 14));
+            case "GET revenue" -> r.json(200, Stats.revenue(store, r.query().getOrDefault("period", "day")));
+            case "GET supplier-summary" -> r.json(200, Stats.suppliers(store, r.query().getOrDefault("period", "day"), r.query().getOrDefault("supplier", "")));
+            case "GET explain" -> r.json(200, Explain.explain(store, r.query()));
+            case "GET reports/:id" -> {
+                Map<String, String> q = r.query();
+                String period = q.getOrDefault("period", "day"), from = q.getOrDefault("from", ""), to = q.getOrDefault("to", "");
+                LocalDateTime now = LocalDateTime.now();
+                r.json(200, switch (id) {
+                    case "sales" -> Reports.sales(store, period, from, to, now);
+                    case "suppliers" -> Reports.suppliers(store, period, q.getOrDefault("supplier", ""), from, to, now);
+                    case "money" -> Reports.money(store, period, from, to, now);
+                    default -> throw new Http.Error(404, "Unknown report");
+                });
+            }
 
             case "POST users" -> {
                 String username = r.param("username").toLowerCase(Locale.ROOT);
@@ -146,8 +160,7 @@ final class AdminApi implements Http.Handler {
         for (ActivityLog.Entry e : log.latest(60)) {
             activity.add(Json.obj("time", e.time(), "actor", e.actor(), "ip", e.ip(), "message", e.message()));
         }
-        List<String> lan = new ArrayList<>();
-        for (String ip : lanAddresses()) lan.add("http://" + ip + ":" + posPort);
+        List<String> lan = List.of(); // Remote staff use Cloudflare; never advertise LAN access.
         return Json.obj(
                 "server", Json.obj(
                         "startedAt", iso(startedAt),

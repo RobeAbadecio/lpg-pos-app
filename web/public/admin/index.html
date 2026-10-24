@@ -10,10 +10,11 @@
   <link rel="stylesheet" href="/admin.css">
 </head>
 <body>
+  <a class="skip-link" href="#main-content">Skip to dashboard</a>
   <header class="topbar">
     <div class="brand">
       <img src="/shared/icon.svg" alt="" width="32" height="32">
-      <div><div class="title">LPG POS Admin</div><div class="muted sub">Server dashboard · this Mac · <span data-version></span></div></div>
+      <div><div class="title">LPG POS Admin</div><div class="muted sub">Store overview · <span data-version></span></div></div>
     </div>
     <div class="top-actions">
       <span class="pill" id="server-status"><span class="dot"></span><span>Connecting…</span></span>
@@ -21,81 +22,66 @@
     </div>
   </header>
 
-  <main class="page">
+  <main class="page" id="main-content" tabindex="-1">
+    <div class="page-heading"><h1>Store dashboard</h1><span class="muted">Sales, supplier balances and staff</span></div>
     <!-- How staff reach the POS -->
+    <details class="access-details">
+      <summary>Staff access <span class="muted">Cloudflare internet link</span></summary>
     <section class="access" aria-label="Access">
       <div class="card access-tile">
-        <div class="access-head"><span class="dot good"></span><h2>This Mac</h2></div>
-        <a class="url" id="url-local" target="_blank" rel="noopener"></a>
-        <p class="muted hint">Open the POS here to sell from this computer.</p>
-      </div>
-      <div class="card access-tile">
-        <div class="access-head"><span class="dot good"></span><h2>Same Wi-Fi</h2></div>
+        <div class="access-head"><h2>Local network access</h2></div>
         <div id="url-lan"></div>
-        <p class="muted hint">Phones and laptops on this network.</p>
+        <p class="muted hint">The admin dashboard is available only on this Nitro.</p>
       </div>
       <div class="card access-tile wide">
         <div class="access-head"><span class="dot" id="tunnel-dot"></span><h2>Internet</h2><span class="pill" id="tunnel-state"></span></div>
         <div id="tunnel-body"></div>
       </div>
     </section>
+    </details>
 
     <div id="stock-banner"></div>
 
-    <section class="card" aria-labelledby="database-title">
-      <div class="card-head"><div><h2 id="database-title">Edit records</h2>
-        <div class="sub">Fix mistakes in any record. A backup is saved before every change, and you can undo your last change.</div></div></div>
-      <div class="db-controls">
-        <label class="field"><span>Records</span><select class="input" id="database-table"></select></label>
-        <label class="field"><span>Search</span><input class="input" id="database-search" type="search" placeholder="Name, product, ID, date…"></label>
-        <button class="btn" type="button" id="database-reload">Reload</button>
-        <button class="btn primary" type="button" id="database-add" disabled>Add record</button>
-      </div>
-      <p id="database-help" class="muted"></p>
-      <p id="database-status" class="muted" role="status">Loading records…</p>
-      <div id="database-records" class="table-wrap"></div>
-      <div id="database-pages" class="db-pages"></div>
-    </section>
+    <nav class="dash-tabs" role="tablist" aria-label="Dashboard">
+      <button type="button" role="tab" class="dash-tab" id="tab-button-customers" data-tab="customers" aria-controls="tab-customers">Customers</button>
+      <button type="button" role="tab" class="dash-tab" id="tab-button-suppliers" data-tab="suppliers" aria-controls="tab-suppliers">Suppliers</button>
+      <button type="button" role="tab" class="dash-tab" id="tab-button-money" data-tab="money" aria-controls="tab-money">Money</button>
+      <button type="button" role="tab" class="dash-tab" id="tab-button-store" data-tab="store" aria-controls="tab-store">Store &amp; staff</button>
+      <span class="muted dash-tip">Click a number to see how it’s worked out. <span class="updated" id="updated"></span></span>
+    </nav>
 
-    <div class="layout">
-      <!-- Sales analytics -->
+    <!-- Customers: sales, money in, who owes -->
+    <div class="layout tab-panel" id="tab-customers" role="tabpanel" aria-labelledby="tab-button-customers" tabindex="0" data-panel="customers">
       <div class="main">
-        <section class="card">
-          <div class="card-head"><div><h2>Daily summary</h2><div class="sub">One day at a time: sales, money in and out, and tanks. Go back to earlier days with ‹ or the list.</div></div></div>
-          <div id="daily" class="daily"></div>
-        </section>
-        <div class="filters" role="group" aria-label="Date range">
-          <button class="chip" data-range="today">Today</button>
-          <button class="chip" data-range="7">7 days</button>
-          <button class="chip" data-range="30">30 days</button>
-          <button class="chip" data-range="90">90 days</button>
-          <button class="chip" data-range="all">All time</button>
-          <span class="muted updated" id="updated"></span>
-        </div>
-
-        <div id="analytics">
-          <section class="card revenue">
-            <div class="card-head">
-              <div>
-                <div class="label">Revenue</div>
-                <div class="hero-value" id="kpi-revenue">—</div>
-                <div class="delta" id="kpi-revenue-delta"></div>
+        <section class="card revenue" id="revenue">
+          <div class="card-head">
+            <div>
+              <div class="label" id="revenue-label">Revenue today</div>
+              <div class="hero-value" id="period-revenue" data-explain="period-revenue">—</div>
+              <div class="delta" id="period-revenue-delta"></div>
+            </div>
+            <div class="revenue-tools">
+              <div class="filters" role="group" aria-label="Revenue period">
+                <button class="chip" data-period="day">Daily</button>
+                <button class="chip" data-period="month">Monthly</button>
+                <button class="chip" data-period="quarter">Quarterly</button>
               </div>
               <button class="btn small" id="trend-toggle" aria-pressed="false">Table</button>
             </div>
-            <div class="chart-head"><h2 id="trend-title">Revenue by day</h2><span class="sub" id="trend-sub"></span></div>
-            <div class="chart" id="trend-chart"></div>
-            <div class="table-wrap" id="trend-table" hidden></div>
-          </section>
+          </div>
+          <div class="chart-head"><h2 id="trend-title">Revenue by day</h2><span class="sub" id="trend-sub"></span></div>
+          <div class="chart" id="trend-chart"></div>
+          <div class="table-wrap" id="trend-table" hidden></div>
+        </section>
 
+        <div id="analytics">
           <section class="kpis">
-            <div class="card tile"><div class="label">Receipts</div><div class="value" id="kpi-count">—</div><div class="delta" id="kpi-count-delta"></div></div>
-            <div class="card tile"><div class="label">Cylinders sold</div><div class="value" id="kpi-qty">—</div><div class="delta" id="kpi-qty-delta"></div></div>
-            <div class="card tile"><div class="label">Average sale</div><div class="value" id="kpi-avg">—</div><div class="delta" id="kpi-avg-delta"></div></div>
-            <div class="card tile"><div class="label">Customers served</div><div class="value" id="kpi-customers">—</div><div class="delta" id="kpi-customers-delta"></div></div>
-            <div class="card tile"><div class="label">Cash collected</div><div class="value" id="kpi-collected">—</div><div class="delta" id="kpi-collected-delta"></div></div>
-            <div class="card tile"><div class="label">Paid to suppliers</div><div class="value" id="kpi-supplier">—</div><div class="delta" id="kpi-supplier-delta"></div><div class="tile-note" id="kpi-supplier-note"></div></div>
-            <div class="card tile"><div class="label">Gross profit (est.)</div><div class="value" id="kpi-profit">—</div><div class="delta" id="kpi-profit-delta"></div><div class="tile-note" id="kpi-profit-note"></div></div>
+            <div class="card tile"><div class="label">Receipts</div><div class="value" id="kpi-count" data-explain="count">—</div><div class="delta" id="kpi-count-delta"></div></div>
+            <div class="card tile"><div class="label">Cylinders sold</div><div class="value" id="kpi-qty" data-explain="qty">—</div><div class="delta" id="kpi-qty-delta"></div></div>
+            <div class="card tile"><div class="label">Average sale</div><div class="value" id="kpi-avg" data-explain="avg">—</div><div class="delta" id="kpi-avg-delta"></div></div>
+            <div class="card tile"><div class="label">Customers served</div><div class="value" id="kpi-customers" data-explain="customers">—</div><div class="delta" id="kpi-customers-delta"></div></div>
+            <div class="card tile"><div class="label">Money in</div><div class="value" id="kpi-collected" data-explain="collected">—</div><div class="delta" id="kpi-collected-delta"></div><div class="tile-note" id="kpi-collected-note"></div></div>
+            <div class="card tile"><div class="label">Gross profit (est.)</div><div class="value" id="kpi-profit" data-explain="profit">—</div><div class="delta" id="kpi-profit-delta"></div><div class="tile-note" id="kpi-profit-note"></div></div>
           </section>
 
           <div class="two">
@@ -121,33 +107,101 @@
           </div>
         </div>
       </div>
-
-      <!-- Operations -->
       <aside class="rail">
-        <section class="card">
-          <div class="card-head"><div><h2>Inventory</h2><div class="sub" id="inventory-sub"></div></div></div>
-          <div id="inventory"></div>
-          <h3 class="minor-head">Tanks by size</h3>
-          <div class="table-wrap" id="by-size"></div>
-          <h3 class="minor-head">At the refiller</h3>
-          <div id="refills"></div>
-          <h3 class="minor-head">Recent stock changes</h3>
-          <div id="stock-moves"></div>
-        </section>
-
         <section class="card">
           <div class="card-head"><div><h2>Unpaid balances</h2><div class="sub" id="receivables-sub"></div></div></div>
           <div id="receivables"></div>
         </section>
 
         <section class="card">
-          <div class="card-head"><div><h2>Staff money</h2><div class="sub" id="staff-money-sub"></div></div></div>
-          <div id="staff-money"></div>
+          <div class="card-head"><div><h2>Tanks not returned</h2><div class="sub" id="tanks-out-sub"></div></div></div>
+          <div id="tanks-out"></div>
+        </section>
+      </aside>
+    </div>
+
+    <!-- Suppliers: refills, tanks bought, money paid out -->
+    <div class="layout tab-panel" id="tab-suppliers" role="tabpanel" data-panel="suppliers" hidden>
+      <div class="main">
+        <section class="card" id="supplier-summary">
+          <div class="card-head">
+            <div><h2>Suppliers</h2><div class="sub" id="sup-sub">Refill trips, tanks and money with suppliers</div></div>
+            <div class="revenue-tools">
+            <select class="input sup-pick" id="sup-supplier" aria-label="Supplier"><option value="">All suppliers</option></select>
+            <div class="filters" role="group" aria-label="Supplier summary period">
+              <button class="chip" data-sup-period="day">Daily</button>
+              <button class="chip" data-sup-period="month">Monthly</button>
+              <button class="chip" data-sup-period="quarter">Quarterly</button>
+            </div>
+            </div>
+          </div>
+          <div class="sup-tiles">
+            <div class="sup-tile"><div class="label">Cost of refills and new tanks</div><div class="value" id="sup-billed" data-explain="sup-billed">—</div><div class="delta" id="sup-billed-delta"></div></div>
+            <div class="sup-tile"><div class="label">Paid to suppliers</div><div class="value" id="sup-paid" data-explain="sup-paid">—</div><div class="delta" id="sup-paid-delta"></div></div>
+            <div class="sup-tile"><div class="label">Refill trips</div><div class="value" id="sup-trips" data-explain="sup-trips">—</div><div class="delta" id="sup-trips-delta"></div></div>
+            <div class="sup-tile"><div class="label">Tanks back with load</div><div class="value" id="sup-refilled" data-explain="sup-refilled">—</div><div class="delta" id="sup-refilled-delta"></div><div class="tile-note" id="sup-refilled-note"></div></div>
+            <div class="sup-tile"><div class="label">New tanks bought</div><div class="value" id="sup-bought" data-explain="sup-bought">—</div><div class="delta" id="sup-bought-delta"></div></div>
+          </div>
+          <h3 class="sup-h" id="sup-how-title">How it was paid</h3>
+          <div class="sup-how" id="sup-how"></div>
+          <h3 class="sup-h" id="sup-by-title">By supplier</h3>
+          <div class="table-wrap" id="sup-by-supplier"></div>
+          <h3 class="sup-h" id="sup-history-title">History</h3>
+          <div class="table-wrap" id="sup-history"></div>
+        </section>
+      </div>
+      <aside class="rail">
+        <section class="card">
+          <div class="card-head"><div><h2>At the refiller</h2><div class="sub">Tanks out for refilling, and what is still owed to each supplier</div></div></div>
+          <div id="refills"></div>
         </section>
 
         <section class="card">
-          <div class="card-head"><div><h2>Tanks not returned</h2><div class="sub" id="tanks-out-sub"></div></div></div>
-          <div id="tanks-out"></div>
+          <div class="card-head"><div><h2>Staff money</h2><div class="sub" id="staff-money-sub"></div></div></div>
+          <div id="staff-money"></div>
+        </section>
+      </aside>
+    </div>
+
+    <!-- Money: cash on hand, money in and out, expenses (entered in the POS dashboard) -->
+    <div class="tab-panel" id="tab-money" role="tabpanel" data-panel="money" hidden>
+      <section class="card">
+        <div class="card-head"><div><h2>Money</h2><div class="sub">Cash on hand, what came in and what was spent: suppliers, delivery gasoline, salaries, advances and other expenses. Expenses are added in the POS Dashboard → Money.</div></div></div>
+        <div id="money-report" class="daily"></div>
+      </section>
+    </div>
+
+    <!-- Store & staff: the day's summary, stock, records and accounts -->
+    <div class="layout tab-panel" id="tab-store" role="tabpanel" data-panel="store" hidden>
+      <div class="main">
+        <section class="card">
+          <div class="card-head"><div><h2>Daily summary</h2><div class="sub">One day at a time: sales, money in and out, and tanks. Go back to earlier days with ‹ or the list.</div></div></div>
+          <div id="daily" class="daily"></div>
+        </section>
+
+        <section class="card" aria-labelledby="database-title">
+          <div class="card-head"><div><h2 id="database-title">Edit records</h2>
+            <div class="sub">Fix mistakes in any record. A backup is saved before every change, and you can undo your last change.</div></div></div>
+          <div class="db-controls">
+            <label class="field"><span>Records</span><select class="input" id="database-table"></select></label>
+            <label class="field"><span>Search</span><input class="input" id="database-search" type="search" placeholder="Name, product, ID, date…"></label>
+            <button class="btn" type="button" id="database-reload">Reload</button>
+            <button class="btn primary" type="button" id="database-add" disabled>Add record</button>
+          </div>
+          <p id="database-help" class="muted"></p>
+          <p id="database-status" class="muted" role="status">Loading records…</p>
+          <div id="database-records" class="table-wrap"></div>
+          <div id="database-pages" class="db-pages"></div>
+        </section>
+      </div>
+      <aside class="rail">
+        <section class="card">
+          <div class="card-head"><div><h2>Inventory</h2><div class="sub" id="inventory-sub"></div></div></div>
+          <div id="inventory"></div>
+          <h3 class="minor-head">Tanks by size</h3>
+          <div class="table-wrap" id="by-size"></div>
+          <h3 class="minor-head">Recent stock changes</h3>
+          <div id="stock-moves"></div>
         </section>
 
         <section class="card">
@@ -156,7 +210,7 @@
         </section>
 
         <section class="card">
-          <div class="card-head"><div><h2>Staff accounts</h2><div class="sub">People who can sign in to the POS. Switch “Dashboard” on to let someone see the sales and stock dashboard there too.</div></div></div>
+          <div class="card-head"><div><h2>Staff accounts</h2><div class="sub">Manage sign-ins and choose who can view the sales and stock dashboard.</div></div></div>
           <div id="users"></div>
           <form id="add-user" class="add-user" autocomplete="off">
             <h3>Add staff account</h3>
@@ -188,6 +242,8 @@
   <script src="/shared/ui.js"></script>
   <script src="/shared/charts.js"></script>
   <script src="/shared/daily.js"></script>
+  <script src="/shared/explain.js"></script>
+  <script src="/shared/reports.js"></script>
   <script src="/admin.js"></script>
 </body>
 </html>

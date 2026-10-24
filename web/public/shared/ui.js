@@ -64,18 +64,25 @@
     return Math.round(sec / 86400) + ' d ago';
   }
 
+  // action: { label, onClick } adds a button (e.g. Undo); the message then stays up longer, and while hovered or focused.
   let toastTimer;
-  function toast(message, isError) {
+  function toast(message, isError, action) {
     let el = document.getElementById('toast');
     if (!el) {
       el = h('div', { id: 'toast', class: 'toast', role: 'status', 'aria-live': 'polite' });
+      el.addEventListener('pointerenter', () => clearTimeout(toastTimer));
+      el.addEventListener('focusin', () => clearTimeout(toastTimer));
+      el.addEventListener('pointerleave', () => hideSoon(4000));
+      el.addEventListener('focusout', () => hideSoon(4000));
       document.body.append(el);
     }
-    el.textContent = message;
+    const hide = () => el.classList.remove('show', 'has-action');
+    function hideSoon(ms) { clearTimeout(toastTimer); toastTimer = setTimeout(hide, ms); }
+    clear(el, h('span', {}, message), action ? h('button', { type: 'button', class: 'toast-action', onclick: () => { hide(); action.onClick(); } }, action.label) : null);
     el.classList.toggle('error', !!isError);
+    el.classList.toggle('has-action', !!action);
     el.classList.add('show');
-    clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => el.classList.remove('show'), isError ? 5000 : 3000);
+    hideSoon(action ? 10000 : isError ? 6000 : 3000);
   }
 
   async function request(method, path, data) {
@@ -98,6 +105,55 @@
   }
 
   // Generic form dialog. fields: [{name, label, type, value, required, placeholder, step, min, max, full, help}]
+  let dialogId = 0;
+  function prepareDialog(dlg) {
+    const heading = dlg.querySelector('h3');
+    heading.id = 'dialog-title-' + (++dialogId);
+    dlg.setAttribute('aria-labelledby', heading.id);
+    const origin = document.activeElement;
+    // Backdrop events target the dialog too; use its bounds to distinguish
+    // outside clicks from clicks on its padding or drags started inside.
+    const isOutside = (event) => {
+      const bounds = dlg.getBoundingClientRect();
+      return event.target === dlg && (event.clientX < bounds.left || event.clientX > bounds.right
+        || event.clientY < bounds.top || event.clientY > bounds.bottom);
+    };
+    let startedOutside = false;
+    dlg.addEventListener('pointerdown', (event) => {
+      startedOutside = event.isPrimary && event.button === 0 && isOutside(event);
+    });
+    dlg.addEventListener('pointercancel', () => { startedOutside = false; });
+    dlg.addEventListener('click', (event) => {
+      if (startedOutside && isOutside(event)) dlg.dismiss();
+      startedOutside = false;
+    });
+    // Typed something? Closing by Escape, a tap outside or Cancel asks first, so a slip doesn't lose the form.
+    let dirty = false;
+    const guarded = !!dlg.querySelector('button[type=submit]'); // read-only views (filters only) close at once
+    dlg.addEventListener('input', () => { dirty = guarded; });
+    dlg.addEventListener('change', () => { dirty = guarded; });
+    const ask = h('div', { class: 'discard-bar', role: 'alert', hidden: true },
+      h('span', {}, 'Close without saving what you entered?'),
+      h('div', { class: 'row-end' },
+        h('button', { type: 'button', class: 'btn small', onclick: () => { ask.hidden = true; (dlg.querySelector('input:not([type=hidden]), select') || dlg).focus(); } }, 'Keep editing'),
+        h('button', { type: 'button', class: 'btn small destructive', onclick: () => { dirty = false; dlg.close(); } }, 'Discard')));
+    dlg.querySelector('form').append(ask);
+    dlg.dismiss = () => {
+      if (!dirty) return dlg.close();
+      ask.hidden = false;
+      ask.querySelector('button').focus();
+    };
+    dlg.addEventListener('cancel', (event) => { // Escape
+      if (!dirty) return;
+      event.preventDefault();
+      dlg.dismiss();
+    });
+    dlg.addEventListener('close', () => {
+      if (origin && origin.isConnected && origin.getClientRects().length) origin.focus();
+      else document.getElementById('main-content')?.focus({ preventScroll: true });
+    });
+  }
+
   function formDialog({ title, message, fields = [], submit = 'Save', danger = false, extra, onSubmit }) {
     return new Promise((resolve) => {
       const dlg = h('dialog', { class: 'modal' });
@@ -121,7 +177,7 @@
         if (f.full) { flush(); rows.push(label); } else { pair.push(label); if (pair.length === 2) flush(); }
       }
       flush();
-      const cancel = h('button', { type: 'button', class: 'btn ghost', onclick: () => dlg.close() }, 'Cancel');
+      const cancel = h('button', { type: 'button', class: 'btn ghost', onclick: () => dlg.dismiss() }, 'Cancel');
       const ok = h('button', { type: 'submit', class: danger ? 'btn destructive' : 'btn primary' }, submit);
       const form = h('form', { method: 'dialog' },
         h('h3', {}, title),
@@ -150,6 +206,7 @@
       dlg.addEventListener('close', () => { dlg.remove(); resolve(null); });
       dlg.append(form);
       document.body.append(dlg);
+      prepareDialog(dlg);
       dlg.showModal();
       const first = Object.values(inputs)[0];
       if (first) first.focus();
@@ -170,7 +227,7 @@
         err,
         h('div', { class: 'row-end' },
           typeof actions === 'function' ? actions(close) : actions,
-          cancel ? h('button', { type: 'button', class: 'btn ghost', onclick: () => close(null) }, cancel) : null,
+          cancel ? h('button', { type: 'button', class: 'btn ghost', onclick: () => dlg.dismiss() }, cancel) : null,
           ok));
       form.addEventListener('submit', async (e) => {
         e.preventDefault();
@@ -190,6 +247,7 @@
       dlg.addEventListener('close', () => { dlg.remove(); resolve(null); });
       dlg.append(form);
       document.body.append(dlg);
+      prepareDialog(dlg);
       dlg.showModal();
       const first = form.querySelector('input:not([type=hidden]), select, textarea');
       if (first) first.focus();
@@ -199,6 +257,23 @@
   function confirmDialog(title, message, submit = 'Delete') {
     return formDialog({ title, message, submit, danger: true, onSubmit: () => true });
   }
+
+  // Standard keyboard behavior for payment choices, view switches and dashboard tabs.
+  document.addEventListener('keydown', (event) => {
+    if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+    const choice = event.target.closest('[role="radio"], [role="tab"]');
+    if (!choice) return;
+    const group = choice.closest('[role="radiogroup"], [role="tablist"]');
+    if (!group) return;
+    const choices = [...group.querySelectorAll('[role="radio"], [role="tab"]')].filter((el) => !el.disabled && el.getClientRects().length);
+    const index = choices.indexOf(choice);
+    if (index < 0) return;
+    const nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? choices.length - 1
+      : (index + (['ArrowLeft', 'ArrowUp'].includes(event.key) ? -1 : 1) + choices.length) % choices.length;
+    event.preventDefault();
+    choices[nextIndex].click();
+    choices[nextIndex].focus();
+  });
 
   // Pages stay open for days (staff phones, the admin tab). When the server has a newer version
   // than the one running here, offer a reload. Never automatic: a sale might be half typed, so

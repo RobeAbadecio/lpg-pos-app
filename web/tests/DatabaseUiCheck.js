@@ -34,7 +34,7 @@ const funcs = new Function('$', 'h', 'clear', 'request', 'UI', 'loadOverview', '
 const field = (label) => find(dialog.body, (n) => n.tag === 'label' && text(n.children[0]) === label).children[1];
 const reason = () => all(dialog.body, (n) => n.tag === 'label').at(-1).children[1];
 (async () => {
-  assert.equal($('database-table').children.length, 11);
+  assert.equal($('database-table').children.length, 14); // 11 tables plus Expenses (3.6), kept customer tanks and starting balances (3.7)
   await new Promise((r) => setTimeout(r, 0)); // the section loads the chosen table on its own
   assert.equal($('database-add').disabled, false);
   assert.match(text($('database-status')), /Showing 1–2 of 2/);

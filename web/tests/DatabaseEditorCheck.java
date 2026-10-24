@@ -30,15 +30,17 @@ public class DatabaseEditorCheck {
         check(new DataStore(dir).owedCount("1")==2,"reload persistence");
         try(var backups=Files.list(dir.resolve("admin-backups"))){check(backups.count()==2,"backup for every save");}
         refuse(()->change("TankReturns","add","",new String[]{"2",time,"1","1","3","test","Too many"}),"excess returns rejected");
-        refuse(()->change("Payments","add","",new String[]{"1",time,"1","1","201","test",""}),"overpayment rejected");
-        change("Payments","add","",new String[]{"1",time,"1","1","100","test",""});
+        refuse(()->change("Payments","add","",new String[]{"1",time,"1","1","201","test","",""}),"overpayment rejected");
+        change("Payments","add","",new String[]{"1",time,"1","1","100","test","","gcash"});
         check(store.paidByReceipt(store.receipts()).get("1")==100,"payment add");
-        change("Payments","edit","1",new String[]{"1",time,"1","1","50","test","Edited"});
+        change("Payments","edit","1",new String[]{"1",time,"1","1","50","test","Edited","gcash"});
         check(store.paidByReceipt(store.receipts()).get("1")==50,"payment edit");
         refuse(()->change("Transactions","edit","1",new String[]{"1","1","1",time,"2","20","test","0","1","","","1",""}),"sale cannot fall below payments");
         refuse(()->change("Customers","delete","1",new String[0]),"referenced customer deletion rejected");
-        refuse(()->change("Payments","add","",new String[]{"2",time,"missing","1","1","test",""}),"orphan payment rejected");
-        refuse(()->change("Payments","edit","1",new String[]{"1",time,"1","1","NaN","test",""}),"invalid money rejected");
+        refuse(()->change("Payments","add","",new String[]{"2",time,"missing","1","1","test","",""}),"orphan payment rejected");
+        refuse(()->change("Payments","edit","1",new String[]{"1",time,"1","1","NaN","test","",""}),"invalid money rejected");
+        refuse(()->change("Payments","edit","1",new String[]{"1",time,"1","1","50","test","","bitcoin"}),"unknown payment method rejected");
+        check(store.payments().get(0).gcash(),"GCash payment kept");
         change("TankReturns","add","",new String[]{"2",time,"1","1","1","test",""});
         change("StockMovements","add","",new String[]{"2",time,"1","refill-send","0","-1","test","","0","1","",""});
         refuse(()->change("TankReturns","delete","2",new String[0]),"undo after empty used is rejected");

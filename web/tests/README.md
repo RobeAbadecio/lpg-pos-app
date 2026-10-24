@@ -6,6 +6,8 @@ From the repository root, compile into an isolated temporary directory:
 javac -d /private/tmp/lpg-admin-check-build web/src/*.java web/tests/*.java
 java -cp /private/tmp/lpg-admin-check-build DatabaseEditorCheck
 java -cp /private/tmp/lpg-admin-check-build AdminDatabaseApiCheck
+java -cp /private/tmp/lpg-admin-check-build RevenuePeriodsCheck
+java -cp /private/tmp/lpg-admin-check-build SupplierSummaryCheck
 node web/tests/DatabaseUiCheck.js
 ```
 

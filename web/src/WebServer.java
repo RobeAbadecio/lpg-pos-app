@@ -9,7 +9,7 @@ import java.util.concurrent.Executors;
 /**
  * LPG POS web server.
  *
- *   POS (staff web app)   http://<this-mac>:8080   all interfaces, staff sign-in required
+ *   POS (staff web app)   http://127.0.0.1:8080   loopback only; remote staff use Cloudflare
  *   Admin dashboard       http://localhost:8090    this Mac only
  *
  * Options (environment variables): LPG_PORT, LPG_ADMIN_PORT, LPG_DATA_DIR.
@@ -22,14 +22,14 @@ public final class WebServer {
         int adminPort = intEnv("LPG_ADMIN_PORT", 8090);
         Path webDir = Path.of(System.getProperty("lpg.web", ".")).toAbsolutePath().normalize();
         Path dataDir = Path.of(System.getenv().getOrDefault("LPG_DATA_DIR",
-                System.getProperty("user.home") + "/POSSystemData")).toAbsolutePath().normalize();
+                webDir.resolve("../POSSystemData").normalize().toString())).toAbsolutePath().normalize();
         Path publicDir = webDir.resolve("public");
         Path shared = publicDir.resolve("shared");
 
         DataStore store = new DataStore(dataDir);
         String autoUser = System.getenv("LPG_AUTO_LOGIN");
         Path realData = Path.of(System.getProperty("user.home"), "POSSystemData").toAbsolutePath().normalize();
-        if (autoUser != null && (dataDir.equals(realData) || store.user(autoUser) == null)) {
+        if (autoUser != null && (dataDir.equals(realData) || dataDir.equals(webDir.resolve("../POSSystemData").normalize()) || store.user(autoUser) == null)) {
             System.out.println("  LPG_AUTO_LOGIN ignored: only allowed for demo data with an existing user.");
             autoUser = null;
         }
@@ -40,7 +40,7 @@ public final class WebServer {
             System.out.println("  Public link (share with staff): " + url);
         });
 
-        HttpServer pos = HttpServer.create(new InetSocketAddress(port), 0);
+        HttpServer pos = HttpServer.create(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), port), 0);
         pos.createContext("/", Http.wrap(new PosApi(store, auth, log, publicDir.resolve("app"), shared, port, autoUser)));
         pos.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
 
@@ -57,8 +57,7 @@ public final class WebServer {
         System.out.println("  ─────────────────────────────────────────────");
         System.out.println("  Admin dashboard (this Mac):  http://localhost:" + adminPort);
         System.out.println("  POS on this Mac:             http://localhost:" + port);
-        List<String> lan = AdminApi.lanAddresses();
-        for (String ip : lan) System.out.println("  POS on your network:         http://" + ip + ":" + port);
+        System.out.println("  Remote staff access:         Cloudflare link only (LAN access disabled)");
         System.out.println("  Data folder:                 " + dataDir);
         if (autoUser != null) System.out.println("  DEMO: POS opens without sign-in, as " + autoUser);
         if (store.users().isEmpty()) {

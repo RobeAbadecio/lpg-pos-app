@@ -147,7 +147,30 @@ final class Http {
             send(200, mime(file), Files.readAllBytes(file), "no-cache");
         }
 
+        /** While held, a response is kept back (an edit sends it only once the whole change is saved). */
+        private Object[] held;
+        private boolean holding;
+
+        void hold() { holding = true; }
+
+        /** Sends the response kept back, if any. */
+        void release() throws IOException {
+            holding = false;
+            if (held != null) send((int) held[0], (String) held[1], (byte[]) held[2], (String) held[3]);
+            held = null;
+        }
+
+        /** Forgets the response kept back, so an error can be sent instead. */
+        void discardHeld() {
+            holding = false;
+            held = null;
+        }
+
         private void send(int status, String type, byte[] bytes, String cache) throws IOException {
+            if (holding) {
+                held = new Object[]{status, type, bytes, cache};
+                return;
+            }
             if (sent) return;
             sent = true;
             Headers h = ex.getResponseHeaders();
