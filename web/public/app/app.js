@@ -897,6 +897,8 @@
   const emptyText = (l) => l.owesTank ? 'No empty in: owes the tank' : l.newTank ? 'New tank (no empty in)'
     : l.emptyKind ? `Empty in: ${l.emptyProduct} (swap)`
     : l.emptyProductId === l.productId ? 'Empty in' : `Empty in: ${l.emptyProduct} (swap)`;
+  // On paper the customer sees what they bought: the empty they gave back (and its brand) stays on screen and in the records.
+  const paperEmptyText = (l) => l.owesTank ? 'No empty in: owes the tank' : l.newTank ? 'New tank (no empty in)' : null;
 
   // onScreen: the receipt dialog, where a later payment entered by mistake can be undone (not on paper).
   function receiptView(rc, onScreen) {
@@ -906,7 +908,7 @@
       h('div', { class: 'rc-meta' }, `${fmtTime(rc.time, { full: true })} · Served by ${rc.staff}`),
       h('div', { class: 'rc-meta' }, `Customer: ${rc.customer}`),
       h('div', { class: 'rc-lines' }, rc.lines.map((l) => h('div', { class: 'rc-line' },
-        h('div', {}, h('div', {}, `${l.qty} × ${l.product}`), h('div', { class: 'rc-sub' }, `${peso.format(l.unitPrice)} each · ${emptyText(l)}`),
+        h('div', {}, h('div', {}, `${l.qty} × ${l.product}`), h('div', { class: 'rc-sub' }, [`${peso.format(l.unitPrice)} each`, onScreen ? emptyText(l) : paperEmptyText(l)].filter(Boolean).join(' · ')),
           l.swapFee ? h('div', { class: 'rc-sub' }, `Swap fee ${peso.format(l.swapFee)} each`) : null,
           l.remark ? h('div', { class: 'rc-sub rc-remark' }, `Remark: ${l.remark}`) : null),
         h('span', { class: 'num' }, peso.format(l.amount))))),
