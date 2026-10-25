@@ -103,13 +103,15 @@ final class PosApi {
             }
             case "GET explain" -> {
                 // Staff see how the dashboard's range figures are worked out (not the admin-only supplier summary).
-                requireDashboard(who);
+                // Balances every staff member already sees in the POS (a customer's, a supplier's, stock) need no dashboard access.
                 String metric = r.query().getOrDefault("metric", "");
-                if (!Set.of("revenue", "count", "qty", "collected", "supplierPaid", "profit", "cashLeft").contains(metric)) {
+                if (!Set.of("customer-balance", "receivables", "supplier-owed", "stock").contains(metric)) requireDashboard(who);
+                if (!Set.of("revenue", "count", "qty", "collected", "supplierPaid", "profit", "cashLeft", "drawer", "expenses", "salaries",
+                        "customer-balance", "receivables", "supplier-owed", "stock", "salary-owed").contains(metric)) {
                     throw new Http.Error(400, "Unknown figure: " + metric);
                 }
                 r.json(200, Explain.explain(store, Map.of("metric", metric, "range", r.query().getOrDefault("range", "7"),
-                        "date", r.query().getOrDefault("date", ""))));
+                        "date", r.query().getOrDefault("date", ""), "id", r.query().getOrDefault("id", ""))));
             }
             case "GET daily" -> {
                 requireDashboard(who);
@@ -201,7 +203,8 @@ final class PosApi {
                 String schedule = DataStore.schedule(r.param("schedule"));
                 int day1 = whole(r.param("day1"), "Pay day", 1, 31);
                 int day2 = r.param("day2").isEmpty() ? 0 : whole(r.param("day2"), "Second pay day", 1, 31);
-                DataStore.Employee e = store.saveEmployee(add ? null : id, name, salary, schedule, day1, day2, limit(r.param("note"), 120, "Note"));
+                DataStore.Employee e = store.saveEmployee(add ? null : id, name, salary, schedule, day1, day2, limit(r.param("note"), 120, "Note"),
+                        "1".equals(r.param("salaryAll")));
                 if (e == null) throw new Http.Error(404, "Employee not found");
                 log.add(who, ip, (add ? "Added " : "Edited ") + "employee " + e.name() + ": salary ₱" + DataStore.money(e.salary()) + ", " + e.schedule());
                 r.json(add ? 201 : 200, Json.obj("id", e.id()));

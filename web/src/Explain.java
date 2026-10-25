@@ -16,7 +16,12 @@ final class Explain {
 
     static final int MAX_ROWS = 300;
 
+    /** Balances as they stand now, for one record (id) or all of them: these take no date range. */
+    static final Set<String> NOW = Set.of("customer-balance", "receivables", "supplier-owed", "salary-owed", "stock");
+
     static Map<String, Object> explain(DataStore store, Map<String, String> q) {
+        String metric = q.getOrDefault("metric", "");
+        if (NOW.contains(metric)) return balance(store, metric, q.getOrDefault("id", ""), LocalDate.now());
         String date = q.getOrDefault("date", "");
         if (!date.isBlank()) return explainDay(store, q.getOrDefault("metric", ""), date);
         return explain(store, q.getOrDefault("metric", ""), q.getOrDefault("range", "7"),
@@ -47,6 +52,8 @@ final class Explain {
         Predicate<LocalDateTime> in = at -> at != null && at.toLocalDate().equals(day);
         String when = "on " + day.format(java.time.format.DateTimeFormatter.ofPattern("MMM d, yyyy", Locale.ENGLISH));
         if (metric.equals("cashLeft")) return cashLeft(c, in, when);
+        if (metric.equals("drawer")) return drawer(store, day);
+        if (metric.equals("expenses") || metric.equals("salaries")) return spending(c, in, when, metric.equals("salaries"));
         return salesMetric(c, metric, in, when);
     }
 
@@ -450,5 +457,241 @@ final class Explain {
                     List.of(part("Refills (" + plural(refilled, "tank", "tanks") + ")", refillCost, "money"), part("New tanks (" + plural(bought, "tank", "tanks") + ")", newCost, "money")),
                     cols, rows, null);
         };
+    }
+
+    // ------------------------------------------------------------------ the day's spending and the drawer
+
+    /** Expenses (gasoline, other) or salaries (salaries and advances, less advances paid back) on one day, as the daily summary. */
+    private static Map<String, Object> spending(Ctx c, Predicate<LocalDateTime> in, String when, boolean payroll) {
+        double total = 0, cash = 0;
+        List<List<Object>> rows = new ArrayList<>();
+        Map<String, Double> byKind = new LinkedHashMap<>();
+        for (DataStore.Expense e : newest(c.store.expenses(), DataStore.Expense::time)) {
+            if (!in.test(e.time()) || e.payroll() != payroll) continue;
+            double v = payroll ? e.outflow() : e.amount();
+            total += v;
+            if (e.cash()) cash += v;
+            byKind.merge(EXPENSE_LABEL.getOrDefault(e.category(), e.category()), v, Double::sum);
+            String what = EXPENSE_LABEL.getOrDefault(e.category(), e.category())
+                    + (e.advanceDeducted() > 0 ? " (" + peso(e.advanceDeducted()) + " advance taken off, not counted again)" : "");
+            rows.add(List.of(e.rawTime(), what, e.employee().isEmpty() ? e.note() : e.employee(), e.method(), DataStore.round(v)));
+        }
+        List<Object> parts = new ArrayList<>();
+        byKind.forEach((k, v) -> parts.add(part(k.equals("Advance paid back") ? k + " (money in)" : k, v, "money")));
+        return result((payroll ? "Salaries " : "Expenses ") + when, total, "money",
+                payroll ? "Salaries and salary advances paid " + when + ", minus advances the employee paid back in cash. A salary counts what was handed over: "
+                        + "an advance taken off it was already counted on the day the advance was given."
+                        : "Money spent " + when + " besides suppliers and salaries: delivery gasoline and other costs.",
+                parts, List.of(col("Time", "date"), col("What", "text"), col("Who / note", "text"), col("Paid by", "text"), col("Amount", "money")), rows,
+                Math.abs(total - cash) > 0.005 ? peso(cash) + " of it was cash from the drawer; the rest was paid online or by check." : null);
+    }
+
+    /** Cash in the drawer at the end of a day: the starting cash plus each day's cash on hand since the start date. */
+    private static Map<String, Object> drawer(DataStore store, LocalDate day) {
+        DataStore.Opening o = store.opening();
+        if (o == null) throw new Http.Error(400, "Cash in the drawer is counted from the starting balances, which aren't entered yet.");
+        if (day.isBefore(o.start())) throw new Http.Error(400, "Records start on " + o.start() + ".");
+        TreeMap<LocalDate, Double> cash = Stats.cashByDay(store);
+        List<List<Object>> rows = new ArrayList<>();
+        double sum = o.cash(), moved = 0;
+        rows.add(List.of(o.start().toString(), "Starting cash", DataStore.round(o.cash()), DataStore.round(sum)));
+        for (var e : cash.subMap(o.start(), true, day, true).entrySet()) {
+            sum += e.getValue();
+            moved += e.getValue();
+            rows.add(List.of(e.getKey().toString(), "Cash on hand that day", DataStore.round(e.getValue()), DataStore.round(sum)));
+        }
+        Collections.reverse(rows);
+        String when = day.format(java.time.format.DateTimeFormatter.ofPattern("MMM d, yyyy", Locale.ENGLISH));
+        return result("Cash in the drawer at the end of " + when, sum, "money",
+                "The starting cash on " + o.start() + " plus the cash on hand of every day since (cash in − cash out), up to " + when + ". "
+                        + "Days without any cash in or out are left out.",
+                List.of(part("Starting cash", o.cash(), "money"), part("Cash on hand of the days since", moved, "money")),
+                List.of(col("Day", "text"), col("What", "text"), col("Cash", "money"), col("In the drawer", "money")), rows, null);
+    }
+
+    // ------------------------------------------------------------------ balances right now
+
+    private static Map<String, Object> balance(DataStore store, String metric, String id, LocalDate today) {
+        Ctx c = new Ctx(store);
+        return switch (metric) {
+            case "customer-balance", "receivables" -> customerBalance(c, metric.equals("receivables") ? "" : need(id));
+            case "supplier-owed" -> supplierOwed(c, id);
+            case "salary-owed" -> salaryOwed(c, id, today);
+            default -> stock(c, id);
+        };
+    }
+
+    private static String need(String id) {
+        if (id == null || id.isBlank()) throw new Http.Error(400, "Choose the record to explain");
+        return id;
+    }
+
+    /** What a customer owes now (or all customers, id ""): the receipts not fully paid, less what was paid on them, plus the starting balance left. */
+    private static Map<String, Object> customerBalance(Ctx c, String id) {
+        if (!id.isEmpty() && !c.customers.containsKey(id)) throw new Http.Error(404, "Customer not found");
+        Map<String, Double> paid = c.store.paidByReceipt(c.receipts);
+        double totals = 0, paidOn = 0, owed = 0;
+        int unpaid = 0;
+        List<List<Object>> rows = new ArrayList<>();
+        for (DataStore.Receipt r : newest(c.receipts, DataStore.Receipt::time)) {
+            if (!id.isEmpty() && !r.customerId().equals(id)) continue;
+            double bal = DataStore.balance(r, paid);
+            if (bal <= 0) continue;
+            double got = DataStore.round(paid.getOrDefault(r.id(), 0.0));
+            totals += r.total();
+            paidOn += got;
+            owed += bal;
+            unpaid++;
+            rows.add(List.of(r.rawTime(), "Receipt #" + r.id(), c.customer(r.customerId()), r.total(), got, bal));
+        }
+        Map<String, Double> start = c.store.openingOwed();
+        DataStore.Opening o = c.store.opening();
+        double startLeft = 0;
+        for (var e : start.entrySet()) {
+            if (!id.isEmpty() && !e.getKey().equals(id)) continue;
+            double had = o == null ? e.getValue() : o.customerMoney().getOrDefault(e.getKey(), e.getValue());
+            startLeft += e.getValue();
+            owed += e.getValue();
+            rows.add(List.of(o == null ? "" : o.time().format(DataStore.TIME), "Owed on the start date", c.customer(e.getKey()),
+                    DataStore.round(had), DataStore.round(had - e.getValue()), e.getValue()));
+        }
+        List<Object> parts = new ArrayList<>();
+        if (unpaid > 0) {
+            parts.add(part("Unpaid receipts (" + unpaid + "): their totals", totals, "money"));
+            if (paidOn > 0.005) parts.add(part("Already paid on them", -paidOn, "money"));
+        }
+        if (startLeft > 0.005) parts.add(part("Starting balance still unpaid", startLeft, "money"));
+        String who = id.isEmpty() ? "all customers" : c.customer(id);
+        return result(id.isEmpty() ? "Owed by customers" : "Balance of " + who, owed, "money",
+                (id.isEmpty() ? "What customers still owe, today." : "What " + who + " still owes, today.")
+                        + " Each receipt not fully paid counts its total after discount, minus what was paid at the sale and paid later. "
+                        + "Fully paid receipts count zero. Payments go to the oldest balance first.",
+                parts, List.of(col("Date", "date"), col("What", "text"), col("Customer", "text"), col("Total", "money"), col("Paid so far", "money"),
+                        col("Still owed", "money")), rows, unpaid == 0 && startLeft <= 0.005 ? "Nothing is owed: every receipt is paid in full." : null);
+    }
+
+    /** What the store owes a supplier now (or all suppliers, id ""): every bill not fully paid, less what was paid on it. */
+    private static Map<String, Object> supplierOwed(Ctx c, String id) {
+        if (!id.isEmpty() && !c.suppliers.containsKey(id)) throw new Http.Error(404, "Supplier not found");
+        double cost = 0, paid = 0, owed = 0;
+        int n = 0;
+        List<List<Object>> rows = new ArrayList<>();
+        for (DataStore.Bill b : newest(c.store.bills(), DataStore.Bill::time)) {
+            if (b.owed() <= 0 || (!id.isEmpty() && !id.equals(b.supplierId()))) continue;
+            cost += b.cost();
+            paid += b.paid();
+            owed += b.owed();
+            n++;
+            rows.add(List.of(b.rawTime(), c.supplier(b.supplierId()), b.label(), DataStore.round(b.cost()), DataStore.round(b.paid()), b.owed()));
+        }
+        List<Object> parts = new ArrayList<>();
+        if (n > 0) {
+            parts.add(part("Unpaid bills (" + n + "): what they cost", cost, "money"));
+            if (paid > 0.005) parts.add(part("Already paid on them", -paid, "money"));
+        }
+        String who = id.isEmpty() ? "suppliers" : c.supplier(id);
+        return result("Owed to " + who, owed, "money",
+                "What the store still owes " + who + ", today: each refill trip (tanks back with load × the cost each), new tanks bought and "
+                        + "what was owed on the start date, minus what was paid on it. Fully paid bills count zero. Payments go to the oldest bill first.",
+                parts, List.of(col("Bill date", "date"), col("Supplier", "text"), col("Bill", "text"), col("Cost", "money"), col("Paid so far", "money"),
+                        col("Still owed", "money")), rows, n == 0 ? "Nothing is owed: every bill is paid in full." : null);
+    }
+
+    /** Salary still owed now to one employee (or everyone on the payroll, id ""): each pay day since they were put on the payroll. */
+    private static Map<String, Object> salaryOwed(Ctx c, String id, LocalDate today) {
+        List<DataStore.Employee> staff = c.store.employees().stream().filter(e -> id.isEmpty() || e.id().equals(id)).toList();
+        if (!id.isEmpty() && staff.isEmpty()) throw new Http.Error(404, "Employee not found");
+        double salaries = 0, paidFor = 0, owed = 0;
+        int days = 0;
+        List<List<Object>> rows = new ArrayList<>();
+        List<String> changed = new ArrayList<>();
+        for (DataStore.Employee e : staff) {
+            Map<LocalDate, Double> paid = c.store.paidPerPayday(e, null);
+            for (LocalDate d : DataStore.duePaydays(e, today)) {
+                double salary = e.salaryOn(d), got = paid.getOrDefault(d, 0.0), left = Math.max(0, salary - got);
+                salaries += salary;
+                paidFor += Math.min(got, salary);
+                owed += left;
+                days++;
+                rows.add(List.of(d.toString(), e.name(), DataStore.round(salary), DataStore.round(got), DataStore.round(left)));
+            }
+            e.rateList().forEach((until, v) -> changed.add(e.name() + "’s salary was " + peso(v) + " for pay days before " + until));
+        }
+        rows.sort((a, b) -> ((String) b.get(0)).compareTo((String) a.get(0)));
+        Map<String, Double> adv = c.store.advancesOwed();
+        double advanced = staff.stream().mapToDouble(e -> adv.getOrDefault(e.name(), 0.0)).sum();
+        List<String> notes = new ArrayList<>(changed);
+        if (advanced > 0.005) notes.add("Unpaid advances (" + peso(advanced) + ") are kept apart: they are taken off when the salary is paid");
+        String who = id.isEmpty() ? "staff" : staff.get(0).name();
+        return result("Salary still owed to " + who, owed, "money",
+                "For every pay day from the day " + (id.isEmpty() ? "each employee" : who) + " was put on the payroll up to today (" + plural(days, "pay day", "pay days")
+                        + "): the salary for that pay day minus what was paid for it (handed over + any advance taken off). Fully paid pay days count zero. "
+                        + "Each salary counts for the pay day it was paid for, early or late.",
+                List.of(part("Salary for those pay days", salaries, "money"), part("Paid for them", -paidFor, "money")),
+                List.of(col("Pay day", "text"), col("Employee", "text"), col("Salary", "money"), col("Paid for it", "money"), col("Still owed", "money")), rows,
+                notes.isEmpty() ? null : String.join(". ", notes) + ".");
+    }
+
+    /**
+     * The store's own tanks of one product (or all, id ""): with load + empty + at the refiller, worked out from the starting
+     * balances, every stock change and every sale. Customers' tanks (owed or kept) aren't the store's stock.
+     */
+    private static Map<String, Object> stock(Ctx c, String id) {
+        if (!id.isEmpty() && !c.products.containsKey(id)) throw new Http.Error(404, "Product not found");
+        Map<String, int[]> by = new LinkedHashMap<>(); // source -> with load, empty, at refiller
+        java.util.function.BiConsumer<String, int[]> add = (k, v) -> {
+            int[] t = by.computeIfAbsent(k, x -> new int[3]);
+            for (int i = 0; i < 3; i++) t[i] += v[i];
+        };
+        Predicate<String> mine = pid -> id.isEmpty() ? c.products.containsKey(pid) : id.equals(pid);
+        DataStore.Opening o = c.store.opening();
+        if (o != null) {
+            o.stock().forEach((pid, v) -> { if (mine.test(pid)) add.accept("On the start date", new int[]{v[0], v[1], 0}); });
+            o.atRefiller().values().forEach(m -> m.forEach((pid, n) -> { if (mine.test(pid)) add.accept("On the start date", new int[]{0, 0, n}); }));
+        }
+        Map<String, String> type = Map.of("count", "Stock counts and corrections", "damaged", "Stock counts and corrections", "other", "Stock counts and corrections",
+                "condition", "Stock counts and corrections", "delivery", "New tanks bought", "purchase", "New tanks bought",
+                "refill-send", "Sent to the refiller", "refill-receive", "Back from the refiller with load", "refill-reject", "Back from the refiller unfilled");
+        int damaged = 0;
+        for (DataStore.Movement m : c.store.movements()) {
+            if (!mine.test(m.productId())) continue;
+            damaged += m.damaged();
+            add.accept(type.getOrDefault(m.type(), "Stock counts and corrections"), new int[]{m.loaded(), m.empty(), m.atRefiller()});
+        }
+        for (DataStore.Line l : c.store.lines()) {
+            if (mine.test(l.productId())) add.accept("Sold (tanks with load out)", new int[]{-l.qty(), 0, 0});
+            if (l.returnedEmpty() && !l.looseEmpty() && mine.test(l.emptyProductId())) add.accept("Empties taken in on sales", new int[]{0, l.qty(), 0});
+        }
+        for (DataStore.TankReturn t : c.store.tankReturns()) if (!t.looseEmpty() && mine.test(t.productId())) add.accept("Owed tanks brought back", new int[]{0, t.qty(), 0});
+        int[] sum = new int[3];
+        List<List<Object>> rows = new ArrayList<>();
+        by.forEach((k, v) -> {
+            for (int i = 0; i < 3; i++) sum[i] += v[i];
+            rows.add(List.of(k, v[0], v[1], v[2]));
+        });
+        // The dashboard counts what's on hand, never below zero per product.
+        int loaded = 0, empty = 0, out = 0;
+        Map<String, DataStore.Stock> now = c.store.stock();
+        for (String pid : c.products.keySet()) {
+            if (!mine.test(pid)) continue;
+            DataStore.Stock st = now.getOrDefault(pid, DataStore.Stock.NONE);
+            loaded += Math.max(0, st.loaded());
+            empty += Math.max(0, st.empty());
+            out += Math.max(0, st.atRefiller());
+        }
+        rows.add(List.of("Now", loaded, empty, out));
+        String what = id.isEmpty() ? "all products" : c.product(id);
+        List<String> notes = new ArrayList<>();
+        if (loaded != sum[0] || empty != sum[1] || out != sum[2]) notes.add("A product below zero counts as zero in the total");
+        if (damaged != 0) notes.add(plural(damaged, "tank is", "tanks are") + " marked damaged (from an older version) and not counted");
+        List<Object> looseRows = c.store.looseEmpties();
+        if (id.isEmpty() && !looseRows.isEmpty()) notes.add("Generic and other-brand empties taken in are listed apart and not counted here");
+        return result("Tanks of " + what, loaded + empty + out, "int",
+                "The store’s own tanks of " + what + ": with load + empty + at the refiller. Worked out from the starting balances, every stock change "
+                        + "and every sale: a sale takes a tank with load out and its empty comes in. Tanks customers still owe and customers’ own tanks kept "
+                        + "at the store are not counted.",
+                List.of(part("With load", loaded, "int"), part("Empty", empty, "int"), part("At the refiller", out, "int")),
+                List.of(col("From", "text"), col("With load", "int"), col("Empty", "int"), col("At the refiller", "int")), rows,
+                notes.isEmpty() ? null : String.join(". ", notes) + ".");
     }
 }

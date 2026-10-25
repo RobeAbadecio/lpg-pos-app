@@ -1,6 +1,8 @@
 // LPG POS — admin dashboard (served on localhost only).
 (function () {
   const { h, clear, peso, count, toast, request, formDialog, confirmDialog, fmtTime, ago } = UI;
+  // A ? beside a balance: how the server worked it out, with the records behind it.
+  const why = (metric, params, what) => Explain.help((url) => request('GET', url), metric, params, what);
   const { columnChart, hbars, delta, sizeTable, bucketLabel, fmtDate } = Charts;
   const $ = (id) => document.getElementById(id);
 
@@ -173,7 +175,8 @@
         h('p', {}, attention.map((i) => (i.loaded <= 0 ? `${i.label}: none with load` : `${i.label}: ${i.loaded} with load (${daysText(i.daysLeft, i.loaded)})`)
           + (i.atRefiller ? `, ${i.atRefiller} at refiller` : i.empty ? `, ${i.empty} empty to send` : '')).join(' · ')))) : null);
 
-    $('inventory-sub').textContent = `${count.format(inv.totalLoaded)} with load · ${count.format(inv.totalEmpty)} empty · ${count.format(inv.totalRefiller)} at refiller · ${count.format(inv.totalTanks)} tanks in all`;
+    clear($('inventory-sub'), `${count.format(inv.totalLoaded)} with load · ${count.format(inv.totalEmpty)} empty · ${count.format(inv.totalRefiller)} at refiller · ${count.format(inv.totalTanks)} tanks in all`,
+      why('stock', {}, 'the tanks in all'));
     sizeTable($('by-size'), inv.bySize);
     // Group by supplier (most urgent product first within each), so each refiller's brands sit together.
     const groups = [];
@@ -187,7 +190,7 @@
       h('div', { class: 'inv-group' }, g.name || 'No supplier set', g.id && sup(g.id)?.contact ? h('span', { class: 'muted' }, ` · ${sup(g.id).contact}`) : null),
       h('div', { class: 'list' }, g.items.map((i) => h('div', { class: 'inv-row' },
         h('div', {},
-          h('div', { class: 'name' }, i.label, i.status !== 'ok' ? statusPill(i.status) : null),
+          h('div', { class: 'name' }, i.label, why('stock', { id: i.id }, `${i.label} stock`), i.status !== 'ok' ? statusPill(i.status) : null),
           h('div', { class: 'meta' }, [
             i.perDay <= 0 ? 'No sales in 14 days' : i.perDay < 0.1 ? 'Sells <0.1/day' : `Sells ~${i.perDay.toFixed(1)}/day`,
             i.loaded <= 0 || i.daysLeft != null ? daysText(i.daysLeft, i.loaded) : null,
@@ -199,8 +202,10 @@
             i.atRefiller ? ` · ${i.atRefiller} at refiller` : null])))))]) : h('div', { class: 'empty' }, 'No products yet.'));
 
     clear($('refills'),
-      inv.owedToSuppliers > 0 ? h('div', { class: 'owe-line' }, h('span', {}, 'Still owed to suppliers'), h('strong', { class: 'num' }, peso.format(inv.owedToSuppliers))) : null,
-      inv.suppliers.filter((s) => s.owed > 0).map((s) => h('div', { class: 'owe-row' }, h('span', {}, s.name), h('strong', { class: 'num' }, peso.format(s.owed)))),
+      inv.owedToSuppliers > 0 ? h('div', { class: 'owe-line' }, h('span', {}, 'Still owed to suppliers', why('supplier-owed', {}, 'what is owed to suppliers')),
+        h('strong', { class: 'num' }, peso.format(inv.owedToSuppliers))) : null,
+      inv.suppliers.filter((s) => s.owed > 0).map((s) => h('div', { class: 'owe-row' }, h('span', {}, s.name, why('supplier-owed', { id: s.id }, `what is owed to ${s.name}`)),
+        h('strong', { class: 'num' }, peso.format(s.owed)))),
       inv.refills.length ? inv.refills.map((r) => h('div', { class: 'move-row' },
         h('div', {}, h('strong', {}, r.supplier), ` · trip #${r.id}`),
         h('div', { class: 'num' }, r.tanks ? `${r.tanks} tank${r.tanks === 1 ? '' : 's'}` : 'All back'),
@@ -219,7 +224,7 @@
   function renderReceivables(rv) {
     $('receivables-sub').textContent = rv.customers ? `${rv.customers} customer${rv.customers === 1 ? '' : 's'} with pay-later balances` : 'Nobody owes anything';
     clear($('receivables'), rv.customers ? [
-      h('div', { class: 'big-owed num' }, peso.format(rv.total)),
+      h('div', { class: 'big-owed num' }, peso.format(rv.total), why('receivables', {}, 'what customers owe')),
       h('div', { class: 'list' }, rv.top.map((c) => h('div', { class: 'owe-row' },
         h('div', {}, h('div', {}, c.customer),
           h('div', { class: 'meta' }, `${c.receipts} unpaid receipt${c.receipts === 1 ? '' : 's'}${c.since ? ` · oldest ${fmtTime(c.since)}${c.days ? ` (${c.days} days)` : ''}` : ''}`)),
@@ -845,7 +850,8 @@
       if (!money) money = Reports.mountMoney($('money-report'), (q) => request('GET', '/api/reports/money?' + new URLSearchParams(q)));
       else money.refresh();
       // Staff salaries (4.1): view only; employees, advances and pay days are entered in the POS Dashboard → Salaries.
-      if (!payroll) payroll = Payroll.mount($('payroll'), { load: () => request('GET', '/api/payroll') });
+      if (!payroll) payroll = Payroll.mount($('payroll'), { load: () => request('GET', '/api/payroll'),
+        why: (metric, params, what) => Explain.help((url) => request('GET', url), metric, params, what) });
       else payroll.refresh();
     }
   }
@@ -858,6 +864,7 @@
   Explain.bind(document.querySelector('main'), (url) => request('GET', url), (el) => {
     const m = el.dataset.explain;
     if (el.dataset.date) return { date: el.dataset.date }; // a daily-summary figure
+    if (['customer-balance', 'receivables', 'supplier-owed', 'salary-owed', 'stock'].includes(m)) return { id: el.dataset.id || '' }; // balances now
     if (m.startsWith('sup-')) return { period: state.supPeriod, supplier: state.supplier };
     if (m.startsWith('period-')) return { period: state.period };
     return { range: statsRange() };

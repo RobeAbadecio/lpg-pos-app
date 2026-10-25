@@ -58,18 +58,18 @@
       const profit = t.profit == null ? '—' : UI.pesoRound.format(t.profit);
       const tiles = h('div', { class: 'kpis' },
         tile('Sales', UI.pesoRound.format(t.revenue), `${plural(t.receipts, 'receipt')} · ${plural(t.tanks, 'tank')}`, 'revenue', d.date),
-        tile('Cash from customers', UI.pesoRound.format(t.collected),
+        tile('Money from customers', UI.pesoRound.format(t.collected),
           [t.collectedLater ? `${peso.format(t.collectedAtSale)} at sale · ${peso.format(t.collectedLater)} paid later` : 'All at the sale',
             t.collectedGcash ? `${peso.format(t.collectedGcash)} by GCash` : ''].filter(Boolean).join(' · '), 'collected', d.date),
         tile('Paid to suppliers', UI.pesoRound.format(t.paidSuppliers),
           t.paidStaff || t.paidOwner ? [`${peso.format(t.paidSales)} from sales`, t.paidOwner ? `${peso.format(t.paidOwner)} owner’s money` : '', t.paidStaff ? `${peso.format(t.paidStaff)} staff money` : ''].filter(Boolean).join(' · ')
             : t.paidSuppliers ? 'All from sales' : 'Nothing paid', 'supplierPaid', d.date),
-        tile('Expenses', UI.pesoRound.format(t.expenses), t.expenses ? (t.expensesCash < t.expenses ? `${peso.format(t.expensesCash)} in cash` : 'All in cash') : 'Gasoline and other costs', null, d.date),
-        tile('Salaries', UI.pesoRound.format(t.salaries || 0), t.salaries ? (t.salariesCash < t.salaries ? `${peso.format(t.salariesCash)} in cash` : 'All in cash') : 'Salaries and advances, less paid back', null, d.date),
+        tile('Expenses', UI.pesoRound.format(t.expenses), t.expenses ? (t.expensesCash < t.expenses ? `${peso.format(t.expensesCash)} in cash` : 'All in cash') : 'Gasoline and other costs', 'expenses', d.date),
+        tile('Salaries', UI.pesoRound.format(t.salaries || 0), t.salaries ? (t.salariesCash < t.salaries ? `${peso.format(t.salariesCash)} in cash` : 'All in cash') : 'Salaries and advances, less paid back', 'salaries', d.date),
         tile('Cash on hand', UI.pesoRound.format(t.cashLeft), 'Cash in − cash paid to suppliers, expenses, salaries and staff', 'cashLeft', d.date),
         // From the starting balances on: the drawer at the end of the day (start of the day + that day's cash on hand).
         t.drawer == null ? null : tile('Cash in the drawer', UI.pesoRound.format(t.drawer),
-          t.startCash != null ? `Starting cash ${peso.format(t.startCash)} + cash on hand` : `${peso.format(t.drawerBefore)} at the start of the day + cash on hand`),
+          t.startCash != null ? `Starting cash ${peso.format(t.startCash)} + cash on hand` : `${peso.format(t.drawerBefore)} at the start of the day + cash on hand`, 'drawer', d.date),
         tile('Gross profit (est.)', profit, t.profit == null ? 'Set refill costs in Products' : d.uncosted.length ? `Leaves out ${d.uncosted.join(', ')}` : null, 'profit', d.date));
 
       const sold = h('section', { class: 'card' },

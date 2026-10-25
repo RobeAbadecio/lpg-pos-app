@@ -16,7 +16,8 @@
   // "₱1,000 of ₱3,000 paid · ₱2,000 left", or why it's unknown.
   function periodText(p, salary) {
     if (p.status === 'unknown') return 'Before they were added: no record of it';
-    return [`${peso.format(p.paid)} of ${peso.format(salary)} paid`, p.left > 0 ? `${peso.format(p.left)} left` : null].filter(Boolean).join(' · ');
+    // The salary of that pay day (it may have changed since): the server sends it with the pay day.
+    return [`${peso.format(p.paid)} of ${peso.format(p.salary != null ? p.salary : salary)} paid`, p.left > 0 ? `${peso.format(p.left)} left` : null].filter(Boolean).join(' · ');
   }
 
   function scheduleText(e) {
@@ -44,7 +45,9 @@
   }
 
   // actions (POS only): add(), edit(e), remove(e), advance(e), pay(e), clear(e), history(e), menu(primary, items, label)
-  function mount(el, { load, actions }) {
+  // why(metric, params, what): a ? button that explains a figure (shared/explain.js), or leave it out.
+  function mount(el, { load, actions, why }) {
+    const q = (metric, params, what) => (why ? why(metric, params, what) : null);
     let data = null;
     const draw = () => {
       if (!data) return;
@@ -54,8 +57,9 @@
       const head = h('div', { class: 'card-head wrap' },
         h('div', {}, h('h2', {}, 'Staff salaries'),
           h('div', { class: 'sub' }, `${count.format(setUp.length)} on the payroll · ${peso.format(data.totalSalary)} per pay day in salaries`
-            + (data.totalOwed > 0 ? ` · ${peso.format(data.totalOwed)} salary still owed` : ' · all pay days settled')
-            + (data.totalAdvanced > 0 ? ` · ${peso.format(data.totalAdvanced)} advanced to ${count.format(owing.length)}` : ' · no unpaid advances'))),
+            + (data.totalOwed > 0 ? ` · ${peso.format(data.totalOwed)} salary still owed` : ' · all pay days settled'),
+          data.totalOwed > 0 ? q('salary-owed', {}, 'the salary still owed') : null,
+          data.totalAdvanced > 0 ? ` · ${peso.format(data.totalAdvanced)} advanced to ${count.format(owing.length)}` : ' · no unpaid advances')),
         actions ? h('button', { type: 'button', class: 'btn primary', onclick: () => actions.add() }, '+ Add employee') : null);
       const row = (e) => {
         const setup = !!e.id;
@@ -66,7 +70,7 @@
           h('td', { class: 'sm-hide' }, scheduleText(e)),
           h('td', { class: 'sm-hide' }, lp ? [h('div', { class: 'nowrap' }, shortDay(lp.payday), ' ', chip(lp.status)),
             h('div', { class: 'cell-sub' }, periodText(lp, e.salary))] : '—'),
-          h('td', { class: 'right num sm-hide' }, setup ? h('strong', { class: e.owed > 0 ? 'owes-text' : null }, peso.format(e.owed)) : '—'),
+          h('td', { class: 'right num sm-hide' }, setup ? [h('strong', { class: e.owed > 0 ? 'owes-text' : null }, peso.format(e.owed)), q('salary-owed', { id: e.id }, `${e.name}’s salary still owed`)] : '—'),
           h('td', { class: 'sm-hide nowrap' }, e.nextPayday ? [dayText(e.nextPayday, data.today),
             e.upcoming && e.upcoming.paid > 0 && e.upcoming.payday === e.nextPayday ? h('div', { class: 'cell-sub' }, `${peso.format(e.upcoming.paid)} paid ahead`) : null] : '—'),
           h('td', { class: 'right num sm-hide' }, e.advanced > 0

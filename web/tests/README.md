@@ -76,3 +76,18 @@ It covers: the store's color and receipt message, the logo (checked by content, 
 kept in the store's own folder and never served from outside it), staff seeing but not changing the look, stores not
 seeing each other's logos, the setup guide's steps following the store's records, hiding it, the pay step when billing
 is on, and backups that include the logo.
+
+## Money check (5.4.0)
+
+```sh
+java -cp "/tmp/lpg-check:web/lib/*" MoneyAuditCheck
+java -cp "/tmp/lpg-check:web/lib/*" ExplainCheck DATA_DIR   # e.g. a folder made by web/demo/make_demo_data.py
+```
+
+MoneyAuditCheck works one small store out by hand and checks every figure against it: receipt totals with percent
+discounts and swap fees, partial and later payments (start balance first, then the oldest receipt), a void and an edit,
+tanks owed and returned (every tank accounted for), a refill trip paid in part, a supplier paid with staff money and the
+staff paid back, a purchase on credit with the owner's money, expenses; then the same figures in the daily summary, the
+Sales and Money reports, the dashboard and the (?) explanations. Also salary changes (pay days before keep their salary),
+centavo rounding, and two businesses kept apart. ExplainCheck recomputes every customer and supplier balance, stock and
+salary owed from the records and checks each (?) explanation against the figure shown.
