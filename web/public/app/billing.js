@@ -115,6 +115,7 @@
     }
     if (me.role !== 'owner') { fail('Only the store owner can see billing.'); return; }
     $('store-name').textContent = me.business.name;
+    Brand.apply(me.brand);
     await load().catch((e) => fail(e.message));
   })();
 })();

@@ -58,6 +58,20 @@
   }
 }
 
+/* 5.3: the store's own accent color (owner picks it on the Team page). Blue above is the standard one. */
+:root[data-brand="green"] { --accent: #1d8048; --accent-ink: #146236; --accent-wash: #e6f3eb; }
+:root[data-brand="teal"] { --accent: #0b7a7a; --accent-ink: #075e5e; --accent-wash: #e2f2f2; }
+:root[data-brand="purple"] { --accent: #7445c9; --accent-ink: #5a33a3; --accent-wash: #efe9fa; }
+:root[data-brand="orange"] { --accent: #b9530c; --accent-ink: #8f3f08; --accent-wash: #fcede3; }
+:root[data-brand="rose"] { --accent: #bf2a62; --accent-ink: #951d4b; --accent-wash: #fbe7ef; }
+@media (prefers-color-scheme: dark) {
+  :root[data-brand="green"] { --accent: #3fb56f; --accent-ink: #8fd9ac; --accent-wash: rgba(63, 181, 111, 0.16); }
+  :root[data-brand="teal"] { --accent: #2bb3b3; --accent-ink: #8bdcdc; --accent-wash: rgba(43, 179, 179, 0.16); }
+  :root[data-brand="purple"] { --accent: #9a77e6; --accent-ink: #c6b2f3; --accent-wash: rgba(154, 119, 230, 0.18); }
+  :root[data-brand="orange"] { --accent: #e8823a; --accent-ink: #f5bb8f; --accent-wash: rgba(232, 130, 58, 0.16); }
+  :root[data-brand="rose"] { --accent: #ec6a9c; --accent-ink: #f5aac7; --accent-wash: rgba(236, 106, 156, 0.16); }
+}
+
 *, *::before, *::after { box-sizing: border-box; }
 html { -webkit-text-size-adjust: 100%; scroll-padding-top: 90px; }
 body {
@@ -241,7 +255,7 @@ body { font-size: 15px; }
 .btn { min-height: 44px; border-color: var(--border-strong); border-radius: var(--radius-sm); font-weight: 550; }
 .btn.small { min-height: 36px; border-radius: 9px; }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-.btn.primary:hover { filter: none; background: #2369be; }
+.btn.primary:hover { filter: brightness(0.92); }
 .btn.danger { color: var(--critical); }
 .btn.xl { min-height: 56px; font-size: 17px; font-weight: 650; border-radius: 12px; }
 .input { min-height: 44px; border-color: var(--border-strong); border-radius: var(--radius-sm); }

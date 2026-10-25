@@ -4,6 +4,24 @@ Every update gets a new version number. It's shown in the POS (header, account m
 
 Numbering is `major.minor.patch`: **major** when the data or the way staff work changes a lot, **minor** for new features, **patch** for fixes and small changes.
 
+## 5.3.0 — 2026-10-25: each store's own look, and a setup guide for new stores (phase 4)
+
+**Your store's look** (account menu → **Team & store details** → Your store's look; store owner only)
+- **Logo**: a PNG or JPG. It's made smaller on the phone or computer before it's sent (at most 320 px), and the server only takes a real PNG or JPEG of at most 200 KB (checked from the file itself). It's kept in the store's own folder, so it's in the backups, and only people signed in to that store can see it.
+- **Color**: blue (standard), green, teal, purple, orange or rose. It changes the buttons, tabs and highlights in the POS, Team and Billing pages, in light and dark mode. Each phone remembers it, so pages don't flash blue first.
+- **Receipt message**: up to 120 characters printed at the bottom of every receipt (for example a thank-you and a delivery number).
+- The POS sidebar (and the top bar on phones) shows the store's logo and name instead of "LPG POS".
+- Receipts, on screen and printed, now start with the logo, the store name, address and mobile number (from Store details). Before, they said "LPG POS".
+- Staff see the look but can't change it. Changes are in the store's activity log and the platform audit log.
+
+**Setup guide** (New sale page, store owner only)
+- "Get your store ready" lists the first steps, each with a button that goes there: make it yours (logo, color or receipt message), add LPG tanks, add suppliers, enter the starting stock, add staff, pay the first month (only when billing is on) and record the first sale.
+- Each step ticks itself from the store's own records, with a progress bar. The guide goes away when every step is done, or when the owner taps **Hide**; **Show it again** is on the Team page.
+
+**Behind the scenes**
+- Database step 4: `brand_color`, `receipt_note`, `logo` and `guide_hidden` on businesses. Older versions ignore these columns, so going back to 5.2.1 keeps working.
+- New calls: `PUT /api/business/brand`, `GET|POST|DELETE /api/business/logo`, `GET|POST /api/guide`; `/api/me` has `brand`.
+- New check: `BrandingCheck` (55 checks).
 ## 5.2.2 — 2026-10-25: printed receipts show only the tanks bought
 
 - On a swap, the printed receipt lists the tank the customer bought and the swap fee, not the empty they gave back. The empty and its brand still show on the receipt on screen, in Edit and in the records, and stock still counts it.

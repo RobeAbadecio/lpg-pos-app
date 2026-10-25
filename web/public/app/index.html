@@ -10,6 +10,7 @@
   <link rel="stylesheet" href="/shared/base.css">
   <link rel="stylesheet" href="/shared/dash.css">
   <link rel="stylesheet" href="/app.css">
+  <script src="/shared/brand.js"></script>
 </head>
 <body>
   <a class="skip-link" href="#main-content">Skip to content</a>
@@ -37,7 +38,7 @@
   <!-- App -->
   <div id="app" hidden>
     <aside class="sidebar">
-      <div class="brand"><img src="/shared/icon.svg" alt="" width="32" height="32"><div class="brand-text"><span class="brand-name">LPG POS</span><span class="muted version-tag" data-version></span></div></div>
+      <div class="brand"><img src="/shared/icon.svg" alt="" width="32" height="32" data-brand-logo><div class="brand-text"><span class="brand-name" data-store-name>LPG POS</span><span class="muted version-tag" data-version></span></div></div>
       <span class="pill demo-badge" id="demo-badge" hidden>Demo · fake data</span>
       <nav class="tabs" aria-label="Sections">
         <button class="tab" data-view="sell" aria-keyshortcuts="F1"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span class="tab-label">New sale</span><kbd class="key">F1</kbd></button>
@@ -70,6 +71,7 @@
           <div><h1>New sale</h1><p class="view-sub"><span id="work-date"></span> · Pick a customer, tap tanks, then take payment.</p></div>
           <div class="view-actions"><button class="btn" data-goto="history">Recent receipts</button></div>
         </header>
+        <section class="card guide" id="guide" aria-labelledby="guide-title" hidden></section>
         <div class="edit-banner" id="edit-banner" hidden>
           <span>Editing receipt <strong id="edit-id"></strong>. Saving replaces its items, prices and payment.</span>
           <button class="btn small" id="cancel-edit">Cancel editing</button>

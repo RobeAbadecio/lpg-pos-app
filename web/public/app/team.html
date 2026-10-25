@@ -7,11 +7,12 @@
   <link rel="icon" href="/shared/icon.svg">
   <link rel="stylesheet" href="/shared/base.css">
   <link rel="stylesheet" href="/shared/account.css">
+  <script src="/shared/brand.js"></script>
 </head>
 <body>
   <main class="acct-shell" id="main-content">
     <div class="acct-top">
-      <img src="/shared/icon.svg" alt="" width="32" height="32">
+      <img src="/shared/icon.svg" alt="" width="32" height="32" data-brand-logo>
       <div><div class="title" id="store-name">Team</div><div class="muted">Staff accounts and store details</div></div>
       <span class="spacer"></span>
       <a class="btn" href="/">← Back to POS</a>
@@ -40,6 +41,28 @@
         <label class="field"><span>Address</span><input class="input" name="address" maxlength="200"></label>
         <div><button class="btn primary" type="submit">Save details</button></div>
       </form>
+    </section>
+
+    <section class="card acct-card" id="look" hidden>
+      <h2>Your store's look</h2>
+      <p class="acct-hint">Your logo and color show in the POS for you and your staff. The logo, address, number and message print on receipts.</p>
+      <div class="logo-row">
+        <div class="logo-box"><img id="logo-img" alt="Store logo" hidden><span id="logo-none" class="muted">No logo</span></div>
+        <div class="logo-actions">
+          <label class="btn" for="logo-file">Upload logo</label>
+          <input id="logo-file" class="sr-only" type="file" accept="image/png,image/jpeg">
+          <button class="btn ghost danger" type="button" id="logo-remove" hidden>Remove</button>
+          <p class="acct-hint">A PNG or JPG picture. It's made smaller on this device before it's sent.</p>
+        </div>
+      </div>
+      <form id="look-form" class="acct-form">
+        <fieldset class="swatches"><legend>Color</legend><div id="swatches" class="swatch-row"></div></fieldset>
+        <label class="field"><span>Message at the bottom of receipts</span>
+          <textarea class="input" name="receiptNote" maxlength="120" rows="2" placeholder="Thank you! Call 0917 123 4567 for delivery."></textarea></label>
+        <div><button class="btn primary" type="submit">Save look</button></div>
+      </form>
+      <div id="guide-again" class="acct-top" hidden><span class="acct-hint">The setup guide on the New sale page is hidden.</span>
+        <button class="btn small" type="button" id="guide-show">Show it again</button></div>
     </section>
   </main>
   <script src="/shared/ui.js"></script>
