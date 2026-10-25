@@ -10,6 +10,9 @@ import java.util.*;
 /**
  * Monthly subscription per business, paid by GoTyme / InstaPay QR and checked by the platform admin.
  *
+ * A business pays first: until its first payment is approved (paid_until empty) it is "unpaid" and can't save
+ * records. The admin can give free days instead (setting billing_trial_days, 0 by default).
+ *
  * A business is paid up to paid_until (a date, inclusive). From DUE_SOON_DAYS before that date it has one open invoice
  * for the next month. Each open invoice gets its own amount (the price plus 1–99 centavos), so a payment in the GoTyme
  * history can be told apart from the others. After paid_until come the grace days (the POS works, with a warning);
@@ -31,9 +34,12 @@ final class Billing {
     record Payment(long id, long invoiceId, long businessId, String reference, int amount, String paidOn, String receipt,
                    String submittedBy, String submitted, String status, String decided, String decidedBy, String note) {}
 
-    /** free, active, due (invoice waiting, still paid up), grace (past paid_until, POS works) or overdue (POS locked). */
+    /**
+     * free, unpaid (never paid yet, POS locked), active, due (invoice waiting, still paid up), grace (past paid_until,
+     * POS works) or overdue (POS locked).
+     */
     record State(String state, String paidUntil, String lockDate, Invoice invoice) {
-        boolean locked() { return state.equals("overdue"); }
+        boolean locked() { return state.equals("overdue") || state.equals("unpaid"); }
     }
 
     record Image(byte[] bytes, String ext) {
@@ -59,10 +65,13 @@ final class Billing {
 
     int graceDays() { return intSetting(platform, "billing_grace_days", 7); }
 
-    static int trialDays(Platform p) { return intSetting(p, "billing_trial_days", 7); }
+    static int trialDays(Platform p) { return intSetting(p, "billing_trial_days", 0); }
 
-    /** The last free day of a business approved today. */
-    static LocalDate trialEnd(Platform p) { return today().plusDays(trialDays(p)); }
+    /** paid_until for a business that starts today: the last free day, or "" (pay first) when there are no free days. */
+    static String trialEnd(Platform p) {
+        int days = trialDays(p);
+        return days == 0 ? "" : today().plusDays(days - 1).toString();
+    }
 
     Map<String, Object> settings() {
         return Json.obj("on", on(), "price", price(), "graceDays", graceDays(), "trialDays", trialDays(platform),
@@ -72,8 +81,8 @@ final class Billing {
     }
 
     /**
-     * Saves the billing settings. Turning billing on gives every paying business that isn't paid up its free days from
-     * today, so nobody is locked out the moment it starts.
+     * Saves the billing settings. Turning billing on starts every paying business that isn't paid up from today: it pays
+     * first (or gets the free days, if any).
      */
     void saveSettings(boolean on, int price, int graceDays, int trialDays, String payee, String note, String actor) {
         if (price < 100 || price > 10_000_00) throw new Http.Error(400, "Price: ₱1 to ₱10,000");
@@ -89,9 +98,8 @@ final class Billing {
                 platform.setSetting("billing_note", note);
                 platform.setSetting("billing_on", on ? "1" : "0");
                 if (on && !was) {
-                    String start = trialEnd(platform).toString();
                     platform.update("UPDATE businesses SET paid_until = ? WHERE billing_exempt = 0 AND status IN ('active','suspended') "
-                            + "AND (paid_until = '' OR paid_until < ?)", start, start);
+                            + "AND (paid_until = '' OR paid_until < ?)", trialEnd(platform), today().toString());
                 }
                 platform.audit(actor, null, "Saved billing settings", (on ? "on" : "off") + ", " + peso(price) + "/month, "
                         + graceDays + " grace days, " + trialDays + " free days");
@@ -123,7 +131,8 @@ final class Billing {
     State state(Platform.Business b) {
         if (!on() || b.billingExempt()) return new State("free", b.paidUntil(), null, null);
         synchronized (platform) {
-            LocalDate paidUntil = b.paidUntil().isEmpty() ? today() : LocalDate.parse(b.paidUntil());
+            if (b.paidUntil().isEmpty()) return new State("unpaid", "", null, ensureInvoice(b.id()));
+            LocalDate paidUntil = LocalDate.parse(b.paidUntil());
             LocalDate lock = paidUntil.plusDays(graceDays() + 1);
             LocalDate t = today();
             String s = !t.isAfter(paidUntil) ? (t.isBefore(paidUntil.minusDays(DUE_SOON_DAYS - 1)) ? "active" : "due")
@@ -151,9 +160,10 @@ final class Billing {
         });
     }
 
-    /** The month a payment made now pays for: right after paid_until, or from today once the business was locked. */
+    /** The month a payment made now pays for: right after paid_until, or from today when never paid or locked. */
     private LocalDate nextPeriodStart(Platform.Business b) {
-        LocalDate paidUntil = b.paidUntil().isEmpty() ? today().minusDays(1) : LocalDate.parse(b.paidUntil());
+        if (b.paidUntil().isEmpty()) return today();
+        LocalDate paidUntil = LocalDate.parse(b.paidUntil());
         LocalDate lock = paidUntil.plusDays(graceDays() + 1);
         return today().isBefore(lock) ? paidUntil.plusDays(1) : today();
     }
@@ -284,7 +294,7 @@ final class Billing {
                 if (b == null) throw new Http.Error(404, "No such business");
                 platform.update("UPDATE businesses SET billing_exempt = ? WHERE id = ?", exempt ? 1 : 0, businessId);
                 if (!exempt && (b.paidUntil().isEmpty() || LocalDate.parse(b.paidUntil()).isBefore(today()))) {
-                    platform.update("UPDATE businesses SET paid_until = ? WHERE id = ?", trialEnd(platform).toString(), businessId);
+                    platform.update("UPDATE businesses SET paid_until = ? WHERE id = ?", trialEnd(platform), businessId);
                 }
                 if (exempt) voidOpen(businessId);
                 platform.audit(actor, businessId, exempt ? "Made the store free of charge" : "Started charging the store", b.name());

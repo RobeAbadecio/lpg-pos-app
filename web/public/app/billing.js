@@ -2,7 +2,7 @@
 (function () {
   const { h, clear, toast, request } = UI;
   const $ = (id) => document.getElementById(id);
-  const STATE = { free: 'No fee', active: 'Paid', due: 'Due soon', grace: 'Late', overdue: 'Overdue' };
+  const STATE = { free: 'No fee', unpaid: 'Not paid yet', active: 'Paid', due: 'Due soon', grace: 'Late', overdue: 'Overdue' };
   const PAY = { pending: 'Being checked', approved: 'Approved', rejected: 'Not accepted' };
   const peso = (c) => '₱' + (c / 100).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const day = (s) => s ? new Date(s.slice(0, 10) + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
@@ -17,6 +17,7 @@
   function statusText(s, graceDays) {
     switch (s.state) {
       case 'free': return 'This store has no subscription fee.';
+      case 'unpaid': return 'Pay the first month below to start using the POS. Until the payment is checked, you and your staff can sign in and look around, but new records can’t be saved.';
       case 'active': return 'Paid until ' + day(s.paidUntil) + '. The next invoice shows up here a week before.';
       case 'due': return 'Paid until ' + day(s.paidUntil) + '. Pay the invoice below to keep the POS running without a break.';
       case 'grace': return 'The subscription ended on ' + day(s.paidUntil) + '. The POS keeps working until ' + day(s.lockDate)

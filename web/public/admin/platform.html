@@ -50,7 +50,7 @@
           <label class="check"><input type="checkbox" name="on"> Charge businesses (turn on after the QR code is uploaded)</label>
           <div class="row">
             <label class="field"><span>Monthly price (₱)</span><input class="input" name="price" inputmode="decimal" required></label>
-            <label class="field"><span>Free days for a new business</span><input class="input" name="trialDays" type="number" min="0" max="90" required></label>
+            <label class="field"><span>Free days for a new business</span><input class="input" name="trialDays" type="number" min="0" max="90" required><small class="muted">0 = every business pays first, before it can save anything.</small></label>
           </div>
           <div class="row">
             <label class="field"><span>Grace days after the paid date</span><input class="input" name="graceDays" type="number" min="0" max="60" required><small class="muted">The POS keeps working, with a warning. After these days, new records can’t be saved.</small></label>

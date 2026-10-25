@@ -70,7 +70,7 @@ public class BillingCheck {
                 "username", "ana", "password", "ana-pass-123") == 201, "business registers");
         long biz2 = platform.businesses().stream().filter(b -> b.name().equals("Gas Two")).findFirst().orElseThrow().id();
         check(admin.status("POST", "/api/businesses/" + biz2 + "/status", "status", "active") == 200, "admin approves");
-        check(platform.business(biz2).paidUntil().equals(day0.plusDays(7).toString()), "approval gives 7 free days");
+        check(platform.business(biz2).paidUntil().isEmpty(), "no free days by default: nothing paid yet");
         check(ana.status("POST", "/api/login", "username", "ana", "password", "ana-pass-123") == 200, "owner signs in");
         check(ana.send("GET", "/api/me").body().contains("\"state\":\"free\""), "billing off: nothing owed");
         check(ana.status("POST", "/api/customers", "firstName", "Bea", "lastName", "Two", "contact", "", "address", "") == 201, "POS works");
@@ -83,16 +83,17 @@ public class BillingCheck {
 
         // ---- settings
         check(admin.status("PUT", "/api/billing", "on", "1", "price", "abc", "graceDays", "7", "trialDays", "7", "payee", "", "note", "") == 400, "bad price refused");
-        check(admin.status("PUT", "/api/billing", "on", "1", "price", "10.00", "graceDays", "7", "trialDays", "7",
+        check(admin.status("PUT", "/api/billing", "on", "1", "price", "10.00", "graceDays", "7", "trialDays", "0",
                 "payee", "R. Abadecio (GoTyme)", "note", "Put your store name in the message") == 200, "billing turned on");
         check(admin.send("GET", "/api/billing").body().contains("\"price\":1000"), "price saved in centavos");
-        check(ana.send("GET", "/api/me").body().contains("\"state\":\"active\""), "inside the free days: active");
-        check(ana.send("GET", "/api/billing").body().contains("\"invoice\":null"), "no invoice until it's nearly due");
 
-        // ---- due soon: an invoice with its own amount
-        Billing.testToday = day0.plusDays(3);
+        // ---- pay first: an existing business is locked until its first payment
+        check(ana.send("GET", "/api/me").body().contains("\"state\":\"unpaid\""), "billing on: existing business must pay first");
+        HttpResponse<String> first = ben.send("POST", "/api/customers", "firstName", "Not", "lastName", "Yet", "contact", "", "address", "");
+        check(first.statusCode() == 402 && first.body().contains("hasn't been paid"), "unpaid: nothing new is saved");
+        check(ben.status("GET", "/api/data") == 200, "unpaid: records can still be seen");
         String bill = ana.send("GET", "/api/billing").body();
-        check(bill.contains("\"state\":\"due\""), "a week before the end: due");
+        check(bill.contains("\"periodStart\":\"" + day0 + "\""), "first invoice starts today");
         long inv = num(bill, "\"invoice\":\\{\"id\":(\\d+)");
         int amount = (int) num(bill, "\"invoice\":\\{[^}]*\"amount\":(\\d+)");
         check(amount > 1000 && amount < 1100, "amount is ₱10 plus a few centavos: " + amount);
@@ -103,7 +104,7 @@ public class BillingCheck {
         HttpResponse<String> add3 = admin.send("POST", "/api/businesses", "name", "Gas Three", "contactName", "Cy", "username", "cyrus", "password", "cy-pass-1234");
         check(add3.statusCode() == 201, "admin adds a business: " + add3.body());
         long biz3 = platform.businesses().stream().filter(b -> b.name().equals("Gas Three")).findFirst().orElseThrow().id();
-        billing.setPaidUntil(biz3, Billing.today(), "test");
+        check(billing.state(platform.business(biz3)).state().equals("unpaid"), "a new business pays first");
         Billing.Invoice inv3 = billing.state(platform.business(biz3)).invoice();
         check(inv3 != null && inv3.amount() != amount, "open invoices never share an amount");
         check(billing.state(platform.business(1)).state().equals("free"), "store 1 stays free");
@@ -147,12 +148,18 @@ public class BillingCheck {
         pool.shutdown();
         check(ok == 1, "approved once, however many clicks: " + ok);
         String after = platform.business(biz2).paidUntil();
-        check(after.equals(LocalDate.parse(before).plusMonths(1).toString()), "paid one more month: " + before + " → " + after);
+        check(before.isEmpty() && after.equals(day0.plusMonths(1).minusDays(1).toString()), "first payment: one month from today: " + after);
         check(billing.invoice(inv).status().equals("paid"), "invoice paid");
-        check(ana.send("GET", "/api/me").body().contains("\"state\":\"active\""), "active again after paying");
+        check(ana.send("GET", "/api/me").body().contains("\"state\":\"active\""), "active after paying");
+        check(ben.status("POST", "/api/customers", "firstName", "Paid", "lastName", "Up", "contact", "", "address", "") == 201, "POS works after paying");
+
+        // ---- due soon: the next invoice, a week before
+        LocalDate until = LocalDate.parse(after);
+        Billing.testToday = until.minusDays(3);
+        String next = ana.send("GET", "/api/billing").body();
+        check(next.contains("\"state\":\"due\"") && next.contains("\"periodStart\":\"" + until.plusDays(1) + "\""), "a week before the end: next month's invoice");
 
         // ---- grace, then the lock
-        LocalDate until = LocalDate.parse(after);
         Billing.testToday = until.plusDays(1);
         check(ana.send("GET", "/api/me").body().contains("\"state\":\"grace\""), "after the paid date: grace");
         check(ben.status("POST", "/api/customers", "firstName", "Grace", "lastName", "Day", "contact", "", "address", "") == 201, "POS works in grace");
@@ -169,11 +176,17 @@ public class BillingCheck {
         check(platform.business(biz2).paidUntil().equals(Billing.today().plusMonths(1).minusDays(1).toString()), "after a lock, the month starts on the day of approval");
         check(ben.status("POST", "/api/customers", "firstName", "Back", "lastName", "Again", "contact", "", "address", "") == 201, "POS works again");
 
+        // ---- free days, if the admin gives them
+        check(admin.status("PUT", "/api/billing", "on", "1", "price", "10.00", "graceDays", "7", "trialDays", "14", "payee", "", "note", "") == 200, "admin gives 14 free days");
+        HttpResponse<String> add4 = admin.send("POST", "/api/businesses", "name", "Gas Four", "contactName", "Di", "username", "diane", "password", "di-pass-1234");
+        long biz4 = num(add4.body(), "\"id\":(\\d+)");
+        check(platform.business(biz4).paidUntil().equals(Billing.today().plusDays(13).toString()) && !billing.state(platform.business(biz4)).locked(), "free days: works at once");
+
         // ---- admin tools: free of charge, paid until
         check(admin.status("POST", "/api/businesses/" + biz3 + "/billing", "exempt", "1") == 200, "admin makes a store free");
         check(billing.state(platform.business(biz3)).state().equals("free") && billing.openInvoice(biz3) == null, "free store: open invoice cancelled");
         check(admin.status("POST", "/api/businesses/" + biz3 + "/billing", "exempt", "0") == 200, "admin starts charging again");
-        check(!billing.state(platform.business(biz3)).locked(), "starting to charge never locks at once");
+        check(!billing.state(platform.business(biz3)).locked(), "starting to charge again keeps the free days");
         check(admin.status("POST", "/api/businesses/" + biz3 + "/billing", "paidUntil", "2099-12-31") == 200, "admin sets a paid-until date (cash)");
         check(billing.state(platform.business(biz3)).state().equals("active"), "paid far ahead: active");
 

@@ -39,7 +39,7 @@ body { margin: 0; background: var(--page); color: var(--ink); font-family: var(-
 }
 /* Billing (owner) and payments (platform admin) */
 .st-due, .st-grace { background: rgba(250, 178, 25, .18); color: var(--warning-ink); }
-.st-overdue { background: var(--critical-wash); color: var(--critical); }
+.st-overdue, .st-unpaid { background: var(--critical-wash); color: var(--critical); }
 .st-free, .st-approved, .st-paid { background: rgba(12, 163, 12, .12); color: var(--good-ink); }
 .pay-grid { display: grid; grid-template-columns: 240px 1fr; gap: 20px; align-items: start; }
 @media (max-width: 620px) { .pay-grid { grid-template-columns: 1fr; } }

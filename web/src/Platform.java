@@ -224,7 +224,7 @@ final class Platform implements AutoCloseable {
             if (b.status().equals("rejected")) throw new Http.Error(409, "This registration was rejected");
             update("UPDATE businesses SET status = ?, decided = ? WHERE id = ?", status, now(), id);
             if (b.status().equals("pending") && status.equals("active")) {
-                update("UPDATE businesses SET paid_until = ? WHERE id = ?", Billing.trialEnd(this).toString(), id);
+                update("UPDATE businesses SET paid_until = ? WHERE id = ?", Billing.trialEnd(this), id);
                 update("UPDATE accounts SET status = 'active' WHERE business_id = ? AND role = 'owner' AND status = 'pending'", id);
             }
             if (status.equals("rejected")) update("DELETE FROM accounts WHERE business_id = ? AND status = 'pending'", id);
@@ -335,7 +335,7 @@ final class Platform implements AutoCloseable {
         return tx(() -> {
             if (accountRow(username) != null) throw new Http.Error(409, "That username is taken");
             long id = createBusiness(name, contactName, phone, email, address, "active");
-            update("UPDATE businesses SET paid_until = ? WHERE id = ?", Billing.trialEnd(this).toString(), id);
+            update("UPDATE businesses SET paid_until = ? WHERE id = ?", Billing.trialEnd(this), id);
             insertAccount(username, id, "owner", "active", contactName, salt, hash);
             audit(actor, id, "Created business", name + " (owner " + username + ")");
             return id;

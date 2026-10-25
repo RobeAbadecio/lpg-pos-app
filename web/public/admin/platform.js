@@ -4,7 +4,7 @@
   const { h, clear, toast, request, formDialog, confirmDialog, openDialog } = UI;
   const $ = (id) => document.getElementById(id);
   const LABEL = { pending: 'Waiting for approval', active: 'Active', suspended: 'Suspended', deactivated: 'Deactivated', rejected: 'Rejected', disabled: 'Disabled' };
-  const BILL = { free: 'No fee', active: 'Paid', due: 'Due soon', grace: 'Late', overdue: 'Overdue' };
+  const BILL = { free: 'No fee', unpaid: 'Not paid yet', active: 'Paid', due: 'Due soon', grace: 'Late', overdue: 'Overdue' };
   const PAY = { pending: 'Waiting', approved: 'Approved', rejected: 'Rejected' };
   const peso = (c) => '₱' + (c / 100).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const state = { businesses: [], open: null };

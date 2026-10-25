@@ -92,11 +92,13 @@ final class PosGate implements Http.Handler {
             default -> {
             }
         }
-        // Overdue: records can still be looked at (and passwords changed), but nothing new is saved.
-        if (!r.method.equals("GET") && !seg[0].equals("me") && billing.state(platform.business(s.businessId)).locked()) {
+        // Not paid yet, or overdue: records can still be looked at (and passwords changed), but nothing new is saved.
+        Billing.State bill = r.method.equals("GET") || seg[0].equals("me") ? null : billing.state(platform.business(s.businessId));
+        if (bill != null && bill.locked()) {
+            String why = bill.state().equals("unpaid") ? "hasn't been paid yet" : "is overdue";
             throw new Http.Error(402, a.owner()
-                    ? "Your LPG POS subscription is overdue, so new records can't be saved. Pay on the Billing page (account menu) to continue."
-                    : "The store's LPG POS subscription is overdue, so new records can't be saved. Ask the store owner to pay.");
+                    ? "Your LPG POS subscription " + why + ", so new records can't be saved. Pay on the Billing page (account menu) to continue."
+                    : "The store's LPG POS subscription " + why + ", so new records can't be saved. Ask the store owner to pay.");
         }
         apis.computeIfAbsent(s.businessId, id -> {
             Tenants.Tenant t = tenants.get(id);
