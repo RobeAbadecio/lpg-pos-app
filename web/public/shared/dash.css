@@ -111,6 +111,17 @@
 .explainable:hover { color: var(--accent-ink, var(--accent)); background: var(--accent-wash); }
 @media (prefers-reduced-motion: reduce) { .explainable { transition: none; } }
 .explainable:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* The small ? beside every figure that explains itself, and the ? button used in lists. */
+.explainable::after, .help-q {
+  display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%;
+  border: 1px solid var(--border-strong); color: var(--muted); background: transparent;
+  font: 600 11px/1 system-ui, sans-serif; vertical-align: middle; flex: none;
+}
+.explainable::after { content: '?'; margin-left: 6px; position: relative; top: -2px; }
+.help-q { margin-left: 4px; padding: 0; cursor: pointer; position: relative; }
+.help-q::before { content: ''; position: absolute; inset: -12px; } /* a bigger target for fingers */
+.help-q:hover, .explainable:hover::after { color: var(--accent-ink, var(--accent)); border-color: var(--accent); }
+.help-q:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .explain { display: grid; gap: 12px; }
 .explain-total { font-size: 28px; font-weight: 650; }
 .explain-how { margin: 0; color: var(--ink-2); }

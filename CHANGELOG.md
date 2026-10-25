@@ -4,6 +4,26 @@ Every update gets a new version number. It's shown in the POS (header, account m
 
 Numbering is `major.minor.patch`: **major** when the data or the way staff work changes a lot, **minor** for new features, **patch** for fixes and small changes.
 
+## 5.4.0 — 2026-10-25: money check, and a (?) beside every important figure
+
+**Fix: raising (or cutting) a salary changed what was owed for pay days already past**
+- "Still owed" compared every pay day since the employee was added with today's salary. After a raise from ₱5,000 to ₱6,000, pay days already paid in full showed ₱1,000 owed each, and **Pay salary** would let that ₱1,000 be paid again (a cut hid salary really owed).
+- A new salary now counts for pay days from the day it's entered (or the day the edit is dated) on. Pay days before keep the salary they had (saved in a new `rates` column in Employees.csv). Each pay day in **History** shows its own salary.
+- **Edit employee** asks, when the salary changes: "Pay days from today on (a raise or a cut)" or "Every pay day (the salary was entered wrong)".
+- Salaries changed before this version have no earlier salary saved, so their past pay days still use today's salary. Check **Salaries** once after updating.
+
+**Fix: centavo rounding**
+- Amounts are rounded to the centavo on their decimal value, halves away from zero. Before, ₱1.005 could round down to ₱1.00 (a percent discount, e.g. 0.1% of ₱1,005, came out ₱0.01 short). Saved records are not changed.
+
+**(?) How is this worked out?**
+- A small **?** sits beside every figure that can explain itself. Tap it (or press Enter on it) to see what the figure is, how it's worked out, the amounts that add up to it (= Result) and the records behind it. The server works it out with the same rules as the figure, and the tests check the two match.
+- New: a customer's **balance** and **what all customers owe** (Customers), **what is owed to a supplier** and to all suppliers (Inventory → Suppliers, admin dashboard), **stock** per product and **tanks in all** (Inventory), **salary still owed** per employee and in all (Salaries), and on the daily summary **Expenses**, **Salaries** and **Cash in the drawer**.
+- Customer, supplier and stock explanations are open to all staff (they already see those figures); the rest need dashboard access, as before. Each business only ever sees its own records.
+- The daily tile "Cash from customers" is now "Money from customers": it always included GCash.
+
+**Other**
+- New test: `MoneyAuditCheck` (147 checks): a small store worked out by hand (discounts, swap fees, pay later, payments, a void and an edit, tanks owed and returned, a refill trip, staff and owner money, a purchase on credit, expenses), every figure checked against the hand-worked amount and across the daily summary, reports, dashboard and explanations; salary changes; rounding; two businesses kept apart. `ExplainCheck` now also recomputes every balance from the records.
+
 ## 5.3.0 — 2026-10-25: each store's own look, and a setup guide for new stores (phase 4)
 
 **Your store's look** (account menu → **Team & store details** → Your store's look; store owner only)

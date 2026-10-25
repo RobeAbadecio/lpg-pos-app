@@ -40,8 +40,10 @@ import java.util.function.Predicate;
  *                     taken off a later salary as advanceDeducted), repaid (an advance the employee paid back in cash:
  *                     money in) or other; method "cash" (default), "online" or "check"; payday (salary, 5.2.1): the
  *                     scheduled pay day (YYYY-MM-DD) it pays for; older salaries without it count for the nearest pay day
- * Employees.csv       id,name,salary,schedule,day1,day2,created,note   staff on the payroll (matched to Expenses by name):
- *                     schedule weekly (day1 1-7 = Mon-Sun), twice (day1, day2 = days of the month) or monthly (day1)
+ * Employees.csv       id,name,salary,schedule,day1,day2,created,note[,rates]   staff on the payroll (matched to Expenses by
+ *                     name): schedule weekly (day1 1-7 = Mon-Sun), twice (day1, day2 = days of the month) or monthly (day1);
+ *                     rates (5.4.0): earlier salaries, "YYYY-MM-DD:amount;..." = the salary of pay days before that date, so a
+ *                     raise doesn't change what was owed for pay days before it (blank: salary for every pay day)
  * WebUsers.csv        username,salt,hash,created[,dashboard]             dashboard "1": may see the summary dashboard
  * StartingBalances.csv id,dateTime,kind,ref,lpgId,qty,amount,trip,staff,note   the business as it stood on the start
  *                     date, all dated that day at 00:00. kind: start (one row; note = when it was saved), cash (amount),
@@ -203,7 +205,35 @@ final class DataStore {
      * Someone on the payroll. schedule: weekly (day1 = 1..7, Monday..Sunday), twice (a month, on day1 and day2)
      * or monthly (on day1; a day past the month's end means its last day).
      */
-    record Employee(String id, String name, double salary, String schedule, int day1, int day2, String created, String note) {}
+    record Employee(String id, String name, double salary, String schedule, int day1, int day2, String created, String note, String rates) {
+        Employee(String id, String name, double salary, String schedule, int day1, int day2, String created, String note) {
+            this(id, name, salary, schedule, day1, day2, created, note, "");
+        }
+
+        /** The salary for one pay day: the earlier salary that was in force then (see rates), else the current one. */
+        double salaryOn(LocalDate payday) {
+            for (Map.Entry<LocalDate, Double> r : rateList().entrySet()) if (payday.isBefore(r.getKey())) return r.getValue();
+            return salary;
+        }
+
+        /** The earlier salaries by the date they stopped (exclusive), oldest first. */
+        TreeMap<LocalDate, Double> rateList() {
+            TreeMap<LocalDate, Double> out = new TreeMap<>();
+            for (String part : rates == null ? new String[0] : rates.split(";")) {
+                int c = part.indexOf(':');
+                LocalDate until = c > 0 ? parseDay(part.substring(0, c)) : null;
+                if (until != null) out.put(until, num(part.substring(c + 1).trim(), 0));
+            }
+            return out;
+        }
+    }
+
+    /** rates written back: "YYYY-MM-DD:amount;...", oldest first. */
+    static String rateText(Map<LocalDate, Double> rates) {
+        StringJoiner j = new StringJoiner(";");
+        rates.forEach((d, v) -> j.add(d + ":" + money(v)));
+        return j.toString();
+    }
 
     static String expenseMethod(String v) { return "online".equals(v) || "check".equals(v) ? v : "cash"; }
 
@@ -1405,7 +1435,7 @@ final class DataStore {
             for (String[] r : employees.rows()) {
                 if (col(r, 1).isBlank()) continue;
                 out.add(new Employee(col(r, 0), col(r, 1).trim(), num(col(r, 2), 0), schedule(col(r, 3)),
-                        (int) num(col(r, 4), 1), (int) num(col(r, 5), 0), col(r, 6), col(r, 7)));
+                        (int) num(col(r, 4), 1), (int) num(col(r, 5), 0), col(r, 6), col(r, 7), col(r, 8)));
             }
             out.sort(Comparator.comparing(Employee::name, String.CASE_INSENSITIVE_ORDER));
             return out;
@@ -1414,11 +1444,17 @@ final class DataStore {
 
     static String schedule(String v) { return "weekly".equals(v) || "twice".equals(v) ? v : "monthly"; }
 
+    Employee saveEmployee(String id, String name, double salary, String schedule, int day1, int day2, String note) {
+        return saveEmployee(id, name, salary, schedule, day1, day2, note, false);
+    }
+
     /**
      * Adds (id null) or changes someone on the payroll. A new name must not be taken; renaming also renames
-     * their salary and advance records, so the history follows them.
+     * their salary and advance records, so the history follows them. A new salary counts for pay days from the
+     * day it's entered (the record date) on; pay days before keep the salary they had. allPaydays: the salary was
+     * entered wrong, so it counts for every pay day (the earlier salaries are forgotten).
      */
-    Employee saveEmployee(String id, String name, double salary, String schedule, int day1, int day2, String note) {
+    Employee saveEmployee(String id, String name, double salary, String schedule, int day1, int day2, String note, boolean allPaydays) {
         synchronized (lock) {
             name = name == null ? "" : name.trim();
             if (name.isEmpty()) throw new Conflict("Enter the employee's name.");
@@ -1433,8 +1469,17 @@ final class DataStore {
             if (employees().stream().anyMatch(e -> e.name().equalsIgnoreCase(key) && (old == null || !e.id().equals(old.id())))) {
                 throw new Conflict(name + " is already on the payroll.");
             }
+            String rates = old == null || allPaydays ? "" : old.rates();
+            if (old != null && !allPaydays && round(old.salary()) != round(salary)) {
+                // Pay days before the change keep what they were worth; a change on the same day just replaces it.
+                LocalDate from = parseTime(now()).toLocalDate();
+                double before = old.salaryOn(from.minusDays(1));
+                TreeMap<LocalDate, Double> keep = new TreeMap<>(old.rateList().headMap(from));
+                if (round(before) != round(salary)) keep.put(from, before);
+                rates = rateText(keep);
+            }
             String[] row = {id == null ? "" : id, name, money(salary), schedule, String.valueOf(day1), day2 > 0 ? String.valueOf(day2) : "",
-                    old == null ? now() : old.created(), note == null ? "" : note};
+                    old == null ? now() : old.created(), note == null ? "" : note, rates};
             if (old == null) {
                 List<String[]> rows = employees.copy();
                 row[0] = nextId(rows);
@@ -1458,7 +1503,7 @@ final class DataStore {
                 }
                 employees.replace(old.id(), row);
             }
-            return new Employee(row[0], name, salary, schedule, day1, day2, row[6], row[7]);
+            return new Employee(row[0], name, salary, schedule, day1, day2, row[6], row[7], rates);
         }
     }
 
@@ -1522,8 +1567,21 @@ final class DataStore {
         return saved != null ? saved : x.time() == null ? null : nearestPayday(e, x.time().toLocalDate());
     }
 
-    /** Salary paid (handed over + advances taken off) per pay day, leaving out the record skip. */
-    private Map<LocalDate, Double> paidPerPayday(Employee e, String skip) {
+    /** The day someone was put on the payroll, or null when unknown. */
+    static LocalDate onPayrollSince(Employee e) {
+        return e.created().length() >= 10 ? parseDay(e.created().substring(0, 10)) : null;
+    }
+
+    /** The pay days salary is owed for so far: every pay day from the day they were put on the payroll up to today. */
+    static List<LocalDate> duePaydays(Employee e, LocalDate today) {
+        List<LocalDate> out = new ArrayList<>();
+        LocalDate start = onPayrollSince(e);
+        if (start != null) for (LocalDate d = nextPayday(e, start); !d.isAfter(today); d = nextPayday(e, d.plusDays(1))) out.add(d);
+        return out;
+    }
+
+    /** Salary paid (handed over + advances taken off) per pay day, leaving out the record skip (null: none). */
+    Map<LocalDate, Double> paidPerPayday(Employee e, String skip) {
         Map<LocalDate, Double> paid = new TreeMap<>();
         for (Expense x : expenses()) {
             if (!x.category().equals("salary") || !x.employee().equalsIgnoreCase(e.name()) || x.id().equals(skip)) continue;
@@ -1543,7 +1601,7 @@ final class DataStore {
         if (e == null) return chosen == null ? "" : chosen.toString();
         LocalDate day = chosen != null ? chosen : nearestPayday(e, paidAt == null ? LocalDate.now() : paidAt.toLocalDate());
         if (chosen != null && !nextPayday(e, chosen).equals(chosen)) throw new Conflict(chosen + " isn't one of " + e.name() + "'s pay days.");
-        double left = round(e.salary() - paidPerPayday(e, skip).getOrDefault(day, 0.0));
+        double left = round(e.salaryOn(day) - paidPerPayday(e, skip).getOrDefault(day, 0.0));
         if (skip != null) {
             Expense was = expenses().stream().filter(x -> x.id().equals(skip)).findFirst().orElse(null);
             if (was != null && was.category().equals("salary") && day.equals(payday(e, was)) && gross <= was.amount() + was.advanceDeducted() + 0.005) return day.toString();
@@ -1559,10 +1617,11 @@ final class DataStore {
      * were put on the payroll, so nothing says whether it was paid), with what was paid for it and what's left.
      */
     private static Map<String, Object> period(Employee e, LocalDate day, double paid, LocalDate start, LocalDate today, List<Object> records) {
-        double left = Math.max(0, round(e.salary() - paid));
+        double salary = e.salaryOn(day), left = Math.max(0, round(salary - paid));
         String status = left <= 0.005 ? "paid" : paid > 0.005 ? "partial" : start == null || day.isBefore(start) ? "unknown"
                 : day.isAfter(today) ? "upcoming" : day.equals(today) ? "unpaid" : "overdue";
-        return Json.obj("payday", day.toString(), "status", status, "paid", round(paid), "left", status.equals("unknown") ? null : round(left), "records", records);
+        return Json.obj("payday", day.toString(), "salary", round(salary), "status", status, "paid", round(paid), "left", status.equals("unknown") ? null : round(left),
+                "records", records);
     }
 
     /**
@@ -1603,15 +1662,11 @@ final class DataStore {
                 totalAdvanced += adv;
                 Map<LocalDate, List<Object>> recs = byDay.getOrDefault(e.name(), Map.of());
                 Map<LocalDate, Double> paid = paidPerPayday(e, null);
-                LocalDate start = e.created().length() >= 10 ? parseDay(e.created().substring(0, 10)) : null;
+                LocalDate start = onPayrollSince(e);
                 LocalDate last = lastPayday(e, today), next = nextPayday(e, today.plusDays(1));
                 // Salary still owed: every pay day from the day they were put on the payroll up to today.
                 double due = 0;
-                if (start != null) {
-                    for (LocalDate d = nextPayday(e, start); !d.isAfter(today); d = nextPayday(e, d.plusDays(1))) {
-                        due += Math.max(0, e.salary() - paid.getOrDefault(d, 0.0));
-                    }
-                }
+                for (LocalDate d : duePaydays(e, today)) due += Math.max(0, e.salaryOn(d) - paid.getOrDefault(d, 0.0));
                 due = round(due);
                 totalOwed += due;
                 // The last 6 pay days since they were put on the payroll and any pay day with a salary on it, newest first.
@@ -2265,8 +2320,13 @@ final class DataStore {
         return String.valueOf(max + 1);
     }
 
+    /**
+     * To the centavo, halves away from zero, on the decimal value (1.005 → 1.01): v * 100 in binary can land just
+     * below the half (100.49999…) and round the wrong way.
+     */
     static double round(double v) {
-        return Math.round(v * 100) / 100.0;
+        if (!Double.isFinite(v)) return v;
+        return java.math.BigDecimal.valueOf(v).setScale(2, java.math.RoundingMode.HALF_UP).doubleValue() + 0.0;
     }
 
     static String money(double v) {

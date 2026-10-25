@@ -369,7 +369,13 @@
   const kg = (w) => (Number.isInteger(w) ? w.toFixed(1) : String(w)) + ' kg';
   const matches = (q, ...fields) => !q || fields.join(' ').toLowerCase().includes(q.toLowerCase());
   const plural = (n, word) => `${count.format(n)} ${word}${n === 1 ? '' : 's'}`;
-  const round2 = (n) => Math.round(n * 100) / 100;
+  // To the centavo, halves away from zero, on the decimal value: 1.005 → 1.01 (n * 100 alone gives 100.49999…).
+  const round2 = (n) => {
+    const a = Math.round(Number((Math.abs(n) * 100).toPrecision(15)));
+    return (n < 0 && a ? -a : a) / 100;
+  };
+  // A ? beside a figure: tapping it shows how the server worked the figure out, with the records behind it.
+  const why = (metric, params, what) => Explain.help((url) => api('GET', url), metric, params, what);
   const todayIso = () => {
     const n = new Date();
     return `${n.getFullYear()}-${String(n.getMonth() + 1).padStart(2, '0')}-${String(n.getDate()).padStart(2, '0')}`;
@@ -1154,7 +1160,8 @@
     const owing = all.filter((c) => c.balance > 0);
     const owed = owing.reduce((s, c) => s + c.balance, 0);
     const tanksOut = all.reduce((n, c) => n + c.tanksOwed, 0);
-    $('customers-summary').textContent = `${plural(all.length, 'customer')}${owed > 0 ? ` · ${peso.format(owed)} unpaid by ${plural(owing.length, 'customer')}` : ''}${tanksOut ? ` · ${plural(tanksOut, 'tank')} not returned` : ''}`;
+    clear($('customers-summary'), `${plural(all.length, 'customer')}${owed > 0 ? ` · ${peso.format(owed)} unpaid by ${plural(owing.length, 'customer')}` : ''}`,
+      owed > 0 ? why('receivables', {}, 'what customers owe') : null, tanksOut ? ` · ${plural(tanksOut, 'tank')} not returned` : '');
     clear($('customers-table'), table([
       { label: '#', render: (c) => c.id, cls: 'muted num', sm: 'hide' },
       { label: 'Name', render: (c) => fullName(c), sm: 'title' },
@@ -1163,7 +1170,7 @@
       { label: 'Last purchase', render: (c) => c.lastPurchase ? fmtTime(c.lastPurchase) : '—', sm: 'hide', cls: 'nowrap' },
       { label: 'Tanks out', right: true, render: (c) => c.tanksOwed ? h('span', { class: 'status low', title: tanksText(c) }, h('span', { class: 'i', 'aria-hidden': 'true' }, '▲'), `${count.format(c.tanksOwed)} out`) : '—', sm: 'hide' },
       { label: 'We keep', right: true, render: (c) => c.keptTanks ? h('span', { title: keptText(c) }, count.format(c.keptTanks)) : '—', sm: 'hide' },
-      { label: 'Balance', right: true, render: (c) => c.balance > 0 ? h('span', { class: 'owes-text' }, peso.format(c.balance)) : '—', sm: 'figure' },
+      { label: 'Balance', right: true, render: (c) => c.balance > 0 ? h('span', { class: 'nowrap' }, h('span', { class: 'owes-text' }, peso.format(c.balance)), why('customer-balance', { id: c.id }, `${fullName(c)}’s balance`)) : '—', sm: 'figure' },
       { label: 'Actions', right: true, cls: 'actions', render: (c) => rowMenu(
         c.balance > 0 ? { label: 'Collect payment', primary: true, onClick: () => paymentDialog({ customer: c }) }
           : c.tanksOwed > 0 ? { label: 'Collect tank', onClick: () => returnDialog(c) }
@@ -1403,8 +1410,8 @@
 
     const sum = (k) => products.reduce((n, p) => n + Math.max(0, p[k]), 0);
     const keptAll = state.data.customers.reduce((n, c) => n + (c.keptTanks || 0), 0);
-    $('inventory-summary').textContent = `${count.format(sum('loaded'))} with load · ${count.format(sum('empty'))} empty · ${count.format(sum('atRefiller'))} at refiller · ${count.format(sum('loaded') + sum('empty') + sum('atRefiller'))} tanks in all`
-      + (keptAll ? ` · plus ${plural(keptAll, 'customer tank')} we keep` : '');
+    clear($('inventory-summary'), `${count.format(sum('loaded'))} with load · ${count.format(sum('empty'))} empty · ${count.format(sum('atRefiller'))} at refiller · ${count.format(sum('loaded') + sum('empty') + sum('atRefiller'))} tanks in all`,
+      why('stock', {}, 'the tanks in all'), keptAll ? ` · plus ${plural(keptAll, 'customer tank')} we keep` : '');
     // Totals per tank size (kg), across brands.
     const sizes = [];
     for (const p of [...products].sort((a, b) => a.weight - b.weight)) {
@@ -1464,7 +1471,7 @@
             h('button', { class: 'btn small ghost', onclick: () => sendRefillDialog(g.s.id) }, 'Send empties')]
             : [h('strong', {}, 'No supplier set'), h('span', { class: 'muted' }, ' · add one in the Suppliers tab')])),
         ...g.items.map((p) => h('tr', {},
-          h('td', { class: 'sm-title' }, p.label),
+          h('td', { class: 'sm-title' }, p.label, why('stock', { id: p.id }, `${p.label} stock`)),
           h('td', { class: 'right num sm-hide' }, count.format(p.loaded)),
           h('td', { class: 'right num sm-hide' }, count.format(p.empty)),
           h('td', { class: 'right num sm-hide' }, count.format(p.atRefiller)),
@@ -1512,7 +1519,7 @@
           h('strong', {}, s.name),
           h('div', { class: 'meta' }, [s.contact, s.brands.join(', ')].filter(Boolean).join(' · ')),
           s.note ? h('div', { class: 'meta' }, s.note) : null,
-          s.owed > 0 ? h('div', { class: 'meta owes-text' }, `Owes ${peso.format(s.owed)} (${plural(s.bills.length, 'bill')})`) : null),
+          s.owed > 0 ? h('div', { class: 'meta owes-text' }, `Owes ${peso.format(s.owed)} (${plural(s.bills.length, 'bill')})`, why('supplier-owed', { id: s.id }, `what is owed to ${s.name}`)) : null),
         supplierActions(s)))) : h('div', { class: 'empty' }, 'No suppliers yet. Add who refills each brand.'));
 
     clear($('movements'), movements.length ? h('div', { class: 'moves' }, movements.map((m) => h('div', { class: 'move' },
@@ -1988,7 +1995,7 @@
         salaries: () => (payrollView = Payroll.mount($('dash-salaries'), { load: () => api('GET', '/api/payroll').catch((e) => {
           if (e.status === 403) { state.me.dashboard = false; updateDashboardAccess(); go('sell'); }
           throw e;
-        }), actions: payrollActions })),
+        }), actions: payrollActions, why })),
         start: () => Opening.mount($('dash-start'), {
           load: () => api('GET', '/api/opening'),
           save: (body) => mutate('POST', '/api/opening', body, 'Starting balances saved'),
@@ -2002,7 +2009,7 @@
     }
   }
 
-  Explain.bind($('view-dashboard'), (url) => api('GET', url), (el) => ({ date: el.dataset.date }));
+  Explain.bind($('view-dashboard'), (url) => api('GET', url), (el) => ({ date: el.dataset.date || '', id: el.dataset.id || '' }));
 
   setInterval(() => {
     // Don't redraw under an open form.
@@ -2183,12 +2190,19 @@
     };
     sched.addEventListener('change', () => fill(false));
     fill(true);
+    // A changed salary counts from today on, so pay days already past keep what they were worth (5.4.0).
+    const scope = h('select', { class: 'input', name: 'salaryAll' }, h('option', { value: '' }, 'Pay days from today on (a raise or a cut)'),
+      h('option', { value: '1' }, 'Every pay day (the salary was entered wrong)'));
+    const scopeField = h('label', { class: 'field' }, h('span', {}, 'The new salary counts for'), scope);
+    scopeField.hidden = true;
+    if (e) salary.addEventListener('input', () => { scopeField.hidden = !(Math.abs((Number(salary.value) || 0) - e.salary) > 0.005); });
     return openDialog({
       title: e ? `Edit ${e.name}` : 'Add employee',
       message: e ? 'Changing the name also renames their salary and advance records.' : 'Their salary and when it’s paid. Advances are taken off it on pay day.',
       submit: e ? 'Save changes' : 'Add employee',
       body: [h('label', { class: 'field' }, h('span', {}, 'Name'), nameIn),
         h('label', { class: 'field' }, h('span', {}, 'Salary per pay day (₱)'), salary),
+        scopeField,
         h('div', { class: 'grid-2' }, h('label', { class: 'field' }, h('span', {}, 'Paid'), sched), h('label', { class: 'field' }, l1, d1)),
         d2Field,
         h('label', { class: 'field' }, h('span', {}, 'Note (optional)'), h('input', { class: 'input', name: 'note', maxlength: 120, value: e ? e.note || null : null }))],
@@ -2234,7 +2248,7 @@
     // Owed pay days oldest first, then the next one, then older ones with no record (to enter a salary paid back then).
     const open = past.filter((p) => p.status !== 'unknown').reverse()
       .concat(e.upcoming && e.upcoming.status !== 'paid' ? [e.upcoming] : [], past.filter((p) => p.status === 'unknown'));
-    const leftFor = (day) => { const p = open.find((x) => x.payday === day); return p ? (p.left == null ? e.salary : p.left) : e.salary; };
+    const leftFor = (day) => { const p = open.find((x) => x.payday === day); return p ? (p.left == null ? (p.salary != null ? p.salary : e.salary) : p.left) : e.salary; };
     const label = (p) => `${Payroll.shortDay(p.payday)} · ${Payroll.STATUS[p.status][2]}` + (p.status === 'unknown' ? '' : ` · ${peso.format(p.left)} left`);
     if (!open.length) { toast(`${e.name}’s pay days are all paid, up to the next one.`); return null; }
     return formDialog({

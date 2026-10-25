@@ -1,5 +1,6 @@
-// "Where does this number come from?" Click a figure marked data-explain to see the records behind
-// it and a short working that adds up to it. Shared by the admin dashboard and the staff dashboard.
+// "Where does this number come from?" Click a figure marked data-explain (it shows a small ?) or a ? button to see
+// what the figure is, how it's worked out, the amounts that add up to it and the records behind it. Shared by the admin
+// dashboard and the POS. The server works it out with the same rules as the figure, so the two always match.
 window.Explain = (function () {
   const { h, clear, peso, count, fmtTime } = UI;
 
@@ -16,8 +17,8 @@ window.Explain = (function () {
     const parts = (ex.parts || []).length ? h('div', { class: 'explain-parts' },
       ex.parts.map((p) => h('div', { class: 'explain-part' }, h('span', {}, p.label),
         h('strong', { class: 'num' + (p.amount < 0 ? ' delta-neg' : '') }, (p.amount < 0 ? '− ' : '') + fmt(Math.abs(p.amount), p.type)))),
-      ex.type === 'money' && ex.parts.every((p) => p.type === 'money') && ex.parts.length > 1
-        ? h('div', { class: 'explain-part sum' }, h('span', {}, 'Total'), h('strong', { class: 'num' }, fmt(ex.total, ex.type))) : null) : null;
+      ex.parts.length > 1 && ex.parts.every((p) => p.type === ex.type)
+        ? h('div', { class: 'explain-part sum' }, h('span', {}, '= Result'), h('strong', { class: 'num' }, fmt(ex.total, ex.type))) : null) : null;
     const rows = ex.rows || [];
     const table = rows.length ? h('div', { class: 'table-wrap explain-table' }, h('table', {},
       h('thead', {}, h('tr', {}, ex.columns.map((c) => h('th', { class: c.type === 'money' || c.type === 'int' ? 'right' : null }, c.label)))),
@@ -29,6 +30,7 @@ window.Explain = (function () {
     return h('div', { class: 'explain' },
       total,
       h('p', { class: 'explain-how' }, ex.how),
+      parts ? h('h4', { class: 'explain-h' }, 'How it adds up') : null,
       parts,
       rows.length ? h('h4', { class: 'explain-h' }, ex.rowCount === 1 ? 'The record behind it' : `The ${count.format(ex.rowCount)} records behind it`) : null,
       table,
@@ -66,9 +68,17 @@ window.Explain = (function () {
     el.classList.add('explainable');
     el.setAttribute('role', 'button');
     el.setAttribute('tabindex', '0');
-    if (!el.title) el.title = 'Click to see how this number is worked out';
+    if (!el.title) el.title = 'Tap to see how this number is worked out';
     return el;
   }
 
-  return { open, bind, mark };
+  // A ? button beside a figure that isn't itself clickable (in a list row, say). params: { id, date, range... }.
+  function help(load, metric, params, what) {
+    return h('button', {
+      type: 'button', class: 'help-q', title: 'How is this worked out?', 'aria-label': `How is ${what || 'this'} worked out?`,
+      onclick: (e) => { e.stopPropagation(); open(load, metric, params || {}); },
+    }, '?');
+  }
+
+  return { open, bind, mark, help };
 })();
