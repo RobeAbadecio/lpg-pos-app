@@ -1,11 +1,12 @@
-// Platform admin: sign-in, payments to check, billing settings, businesses (approve, suspend, reactivate), their
-// accounts, health, backups, audit log.
+// Platform admin: sign-in, payments to check, MariBank emails, billing settings, businesses (approve, suspend,
+// reactivate), their accounts, health, backups, audit log.
 (function () {
   const { h, clear, toast, request, formDialog, confirmDialog, openDialog } = UI;
   const $ = (id) => document.getElementById(id);
   const LABEL = { pending: 'Waiting for approval', active: 'Active', suspended: 'Suspended', deactivated: 'Deactivated', rejected: 'Rejected', disabled: 'Disabled' };
   const BILL = { free: 'No fee', unpaid: 'Not paid yet', active: 'Paid', due: 'Due soon', grace: 'Late', overdue: 'Overdue' };
   const PAY = { pending: 'Waiting', approved: 'Approved', rejected: 'Rejected' };
+  const MAIL = { new: 'No payment sent', matched: 'Matches a payment', used: 'Used', ignored: 'Not a fee', untrusted: 'Not trusted' };
   const peso = (c) => '₱' + (c / 100).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const state = { businesses: [], open: null };
   let setupMode = false;
@@ -191,7 +192,8 @@
   }
 
   async function loadBilling() {
-    const { settings, payments } = await request('GET', '/api/billing');
+    const { settings, payments, mail, emails } = await request('GET', '/api/billing');
+    renderMail(mail, emails);
     const f = $('billing-form');
     if (!f.dataset.loaded) { // don't overwrite what the admin is typing on a refresh
       f.on.checked = settings.on;
@@ -230,13 +232,96 @@
     }
     return h('tr', {},
       h('td', { class: 'nowrap' }, (p.submitted || '').slice(0, 16)),
-      h('td', {}, h('b', {}, p.business || '#' + p.businessId), h('div', { class: 'muted' }, 'by ' + p.submittedBy)),
+      h('td', {}, h('b', {}, p.business || '#' + p.businessId), h('div', { class: 'muted' }, p.submittedBy === 'bank email' ? 'from the MariBank email' : 'by ' + p.submittedBy)),
       h('td', { class: 'nowrap' }, p.invoice ? [p.invoice.number, h('div', { class: 'muted' }, 'asks ' + peso(p.invoice.amount))] : '—'),
       h('td', {}, h('b', {}, peso(p.amount)), h('div', { class: 'muted' }, 'on ' + p.paidOn)),
-      h('td', {}, p.reference, p.warnings && p.warnings.length ? h('ul', { class: 'warn-list' }, p.warnings.map((w) => h('li', {}, w))) : null),
+      h('td', {}, p.reference, p.bank ? h('div', { class: 'bank-ok' }, '✓ MariBank email: ' + peso(p.bank.amount) + ' at ' + p.bank.time) : null,
+        p.warnings && p.warnings.length ? h('ul', { class: 'warn-list' }, p.warnings.map((w) => h('li', {}, w))) : null),
       h('td', {}, h('span', { class: 'st st-' + p.status }, PAY[p.status] || p.status), p.note ? h('div', { class: 'muted' }, p.note) : null),
       h('td', { class: 'actions' }, actions));
   }
+
+  // ------------------------------------------------------------------ MariBank emails
+
+  function renderMail(mail, emails) {
+    const f = $('mail-form');
+    if (!f.dataset.loaded) {
+      f.on.checked = mail.on;
+      f.auto.checked = mail.auto;
+      f.user.value = mail.user;
+      f.dataset.loaded = '1';
+    }
+    $('mail-pw-hint').textContent = mail.password ? 'Saved. Leave empty to keep it.' : 'Kept only on this computer, never shown again.';
+    clear($('mail-state'), h('span', { class: 'st st-' + (mail.on ? 'active' : 'pending') }, mail.on ? (mail.auto ? 'On · auto-approve' : 'On · suggest only') : 'Off'));
+    $('mail-status').textContent = mail.lastError ? 'Last check ' + mail.lastCheck + ' failed: ' + mail.lastError
+      : mail.lastCheck ? 'Last checked ' + mail.lastCheck + '.' : 'Not checked yet.';
+    $('mail-status').classList.toggle('acct-error', !!mail.lastError);
+    clear($('email-rows'), emails.length ? emails.map(emailRow)
+      : h('tr', {}, h('td', { colspan: 6, class: 'muted' }, 'No MariBank emails yet.')));
+  }
+
+  function emailRow(e) {
+    const actions = [];
+    let match;
+    if (e.status === 'new' && e.invoice) {
+      match = [h('span', { class: 'st st-new' }, 'No payment sent'), h('div', { class: 'muted' }, 'amount fits ' + e.invoice.number + ' · ' + e.business)];
+      actions.push(btn('Approve for ' + e.business, async () => {
+        if (await confirmDialog('Approve ' + peso(e.amount) + ' for ' + e.business + '?',
+          'Nobody sent this reference, but the amount is exactly what invoice ' + e.invoice.number + ' asks. The store gets one more month.', 'Approve')) {
+          mailAction(e, 'apply', 'Approved');
+        }
+      }, 'btn primary small'));
+    } else {
+      match = [h('span', { class: 'st st-' + e.status }, MAIL[e.status] || e.status),
+        e.status === 'new' ? h('div', { class: 'muted' }, 'no invoice asks this amount') : null,
+        e.problem ? h('div', { class: 'muted' }, e.problem) : null,
+        e.business ? h('div', { class: 'muted' }, e.business) : null];
+    }
+    if (e.status === 'new') actions.push(btn('Not a fee', () => mailAction(e, 'ignore', 'Marked')));
+    return h('tr', {},
+      h('td', { class: 'nowrap' }, e.time),
+      h('td', {}, h('b', {}, peso(e.amount))),
+      h('td', {}, e.reference),
+      h('td', {}, e.from || '—'),
+      h('td', {}, match),
+      h('td', { class: 'actions' }, actions));
+  }
+
+  async function mailAction(e, action, done) {
+    try {
+      await request('POST', `/api/bank-emails/${e.id}/${action}`);
+      toast(done);
+      await refresh();
+    } catch (ex) {
+      toast(ex.message, true);
+    }
+  }
+
+  $('mail-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const f = e.target;
+    try {
+      await request('PUT', '/api/mail', { on: f.on.checked ? '1' : '0', auto: f.auto.checked ? '1' : '0', user: f.user.value.trim(), password: f.password.value });
+      f.password.value = '';
+      toast('Email settings saved');
+      await refresh();
+    } catch (ex) {
+      toast(ex.message, true);
+    }
+  });
+
+  $('mail-check').addEventListener('click', async (e) => {
+    e.target.disabled = true;
+    try {
+      const { added } = await request('POST', '/api/mail/check');
+      toast(added ? added + ' new MariBank email' + (added > 1 ? 's' : '') : 'No new MariBank emails');
+    } catch (ex) {
+      toast(ex.message, true);
+    } finally {
+      e.target.disabled = false;
+      await refresh();
+    }
+  });
 
   async function payAction(p, action, data, done) {
     try {

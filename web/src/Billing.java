@@ -48,6 +48,8 @@ final class Billing {
 
     private final Platform platform;
     private final Path files;
+    /** Runs after an owner sends a payment (MailWatch looks for its bank email). */
+    volatile Runnable afterSubmit = () -> {};
 
     Billing(Platform platform) throws IOException {
         this.platform = platform;
@@ -191,6 +193,12 @@ final class Billing {
 
     /** The owner says they paid an invoice. Returns the new payment's id. */
     long submit(long businessId, long invoiceId, String reference, int amount, String paidOn, Image receipt, String actor) {
+        long id = save(businessId, invoiceId, reference, amount, paidOn, receipt, actor);
+        afterSubmit.run();
+        return id;
+    }
+
+    private long save(long businessId, long invoiceId, String reference, int amount, String paidOn, Image receipt, String actor) {
         synchronized (platform) {
             return platform.tx(() -> {
                 Invoice inv = invoice(invoiceId);
@@ -266,6 +274,8 @@ final class Billing {
                 LocalDate until = start.plusMonths(1).minusDays(1);
                 platform.update("UPDATE invoices SET period_start = ?, period_end = ? WHERE id = ?", start.toString(), until.toString(), p.invoiceId());
                 platform.update("UPDATE businesses SET paid_until = ? WHERE id = ?", until.toString(), b.id());
+                platform.update("UPDATE bank_emails SET status = 'used', payment_id = ?, invoice_id = ? WHERE reference = ? AND status IN ('new','matched')",
+                        p.id(), p.invoiceId(), p.reference());
                 platform.audit(actor, b.id(), "Approved payment", peso(p.amount()) + ", ref " + p.reference() + "; paid until " + until);
                 return null;
             });
@@ -279,6 +289,7 @@ final class Billing {
                 if (p == null) throw new Http.Error(404, "No such payment");
                 if (platform.update("UPDATE payments SET status = 'rejected', decided = ?, decided_by = ?, note = ? WHERE id = ? AND status = 'pending'",
                         Platform.now(), actor, note, paymentId) != 1) throw new Http.Error(409, "This payment was already decided");
+                platform.update("UPDATE bank_emails SET status = 'new', payment_id = NULL, invoice_id = NULL WHERE payment_id = ? AND status = 'matched'", paymentId);
                 platform.audit(actor, p.businessId(), "Rejected payment", "ref " + p.reference() + (note.isEmpty() ? "" : ": " + note));
                 return null;
             });

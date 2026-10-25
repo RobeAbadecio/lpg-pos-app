@@ -13,7 +13,7 @@ import java.util.*;
  * Business Admin, at most one active per business, enforced by an index) and "staff". The password hash of an
  * active account lives in its business's WebUsers.csv like before; a pending account keeps it here until approved.
  *
- * Billing (invoices, payments) shares this connection and lock; see Billing.
+ * Billing (invoices, payments) and the bank emails share this connection and lock; see Billing and MailWatch.
  *
  * One connection, every method synchronized: there is one server process, and SQLite serialises writes anyway.
  */
@@ -105,6 +105,25 @@ final class Platform implements AutoCloseable {
             CREATE UNIQUE INDEX one_pending_payment ON payments(invoice_id) WHERE status = 'pending';
             CREATE INDEX payments_status ON payments(status, id);
             CREATE INDEX invoices_business ON invoices(business_id, id);
+            """,
+            // 5.2.0: MariBank "money received" emails read from the mailbox, matched to payments and invoices.
+            """
+            CREATE TABLE bank_emails (
+              id INTEGER PRIMARY KEY,
+              message_id TEXT NOT NULL UNIQUE,
+              received TEXT NOT NULL,
+              time TEXT NOT NULL,
+              amount INTEGER NOT NULL CHECK (amount > 0),
+              reference TEXT NOT NULL,
+              sender TEXT NOT NULL DEFAULT '',
+              status TEXT NOT NULL CHECK (status IN ('new','matched','used','ignored','untrusted')),
+              problem TEXT NOT NULL DEFAULT '',
+              invoice_id INTEGER REFERENCES invoices(id),
+              payment_id INTEGER REFERENCES payments(id),
+              created TEXT NOT NULL
+            );
+            CREATE UNIQUE INDEX bank_email_reference ON bank_emails(reference) WHERE status != 'untrusted';
+            CREATE INDEX bank_emails_status ON bank_emails(status, id);
             """,
     };
 

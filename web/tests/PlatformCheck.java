@@ -83,7 +83,7 @@ public class PlatformCheck {
         pos.start();
         HttpServer adm = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         int adminPort = adm.getAddress().getPort();
-        adm.createContext("/", Http.wrap(new AdminApi(platform, billing, tenants, gate, auth, new Tunnel(1, u -> {}), pub.resolve("admin"), pub.resolve("shared"), 1, adminPort)));
+        adm.createContext("/", Http.wrap(new AdminApi(platform, billing, new MailWatch(platform, billing), tenants, gate, auth, new Tunnel(1, u -> {}), pub.resolve("admin"), pub.resolve("shared"), 1, adminPort)));
         adm.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
         adm.start();
         String posUrl = "http://localhost:" + pos.getAddress().getPort();

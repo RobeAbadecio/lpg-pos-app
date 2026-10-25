@@ -33,6 +33,7 @@ public final class WebServer {
         Platform platform = new Platform(dataDir.resolve("platform.db"));
         Tenants tenants = new Tenants(dataDir, platform);
         Billing billing = new Billing(platform);
+        MailWatch mail = new MailWatch(platform, billing);
         long migrated = tenants.migrateLegacy(dataDir, System.getenv().getOrDefault("LPG_STORE_NAME", "My LPG store"));
         if (migrated > 0) System.out.println("  Copied the existing store data into business " + migrated + " (originals left in place).");
 
@@ -55,12 +56,12 @@ public final class WebServer {
         pos.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
 
         HttpServer admin = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), adminPort), 0);
-        admin.createContext("/", Http.wrap(new AdminApi(platform, billing, tenants, gate, auth, tunnel, publicDir.resolve("admin"), shared, port, adminPort)));
+        admin.createContext("/", Http.wrap(new AdminApi(platform, billing, mail, tenants, gate, auth, tunnel, publicDir.resolve("admin"), shared, port, adminPort)));
         admin.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
 
         // Backup and this month's invoices at start-up, then once a day; a failure is logged and never stops the POS.
         ScheduledExecutorService daily = Executors.newSingleThreadScheduledExecutor(r -> {
-            Thread t = new Thread(r, "backups");
+            Thread t = new Thread(r, "background");
             t.setDaemon(true);
             return t;
         });
@@ -76,6 +77,8 @@ public final class WebServer {
                 System.err.println("  Invoices failed: " + e.getMessage());
             }
         }, 0, 24, TimeUnit.HOURS);
+        // MariBank emails: read the mailbox every few minutes when it's turned on (the first look waits a minute).
+        daily.scheduleWithFixedDelay(mail::tick, 1, MailWatch.POLL_MINUTES, TimeUnit.MINUTES);
 
         pos.start();
         admin.start();
