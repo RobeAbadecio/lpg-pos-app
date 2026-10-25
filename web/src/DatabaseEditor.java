@@ -19,7 +19,7 @@ final class DatabaseEditor {
         SCHEMAS.put("SupplierPayments", "id,dateTime,supplierId,refillId,kind,amount,staff,note,source,paidBy,method");
         SCHEMAS.put("StaffPaybacks", "id,dateTime,staff,amount,recordedBy,note");
         SCHEMAS.put("TankReturns", "id,dateTime,customerId,lpgId,qty,staff,remark,emptyKind,emptyBrand");
-        SCHEMAS.put("Expenses", "id,dateTime,category,amount,employee,method,recordedBy,note,advanceDeducted");
+        SCHEMAS.put("Expenses", "id,dateTime,category,amount,employee,method,recordedBy,note,advanceDeducted,payday");
         SCHEMAS.put("TankDeposits", "id,dateTime,customerId,lpgId,qty,kind,staff,note,receiptId");
         SCHEMAS.put("StartingBalances", "id,dateTime,kind,ref,lpgId,qty,amount,trip,staff,note");
     }
@@ -78,6 +78,7 @@ final class DatabaseEditor {
             if (name.equals("emptyKind") && !Set.of("", "generic", "other").contains(v)) throw new Http.Error(400, "Empty kind must be generic, other or blank");
             if (name.equals("method") && Set.of("SupplierPayments", "Expenses").contains(table) && !Set.of("", "cash", "check", "online").contains(v))
                 throw new Http.Error(400, "Method must be cash, check or online");
+            if (name.equals("payday") && !v.isEmpty() && !v.matches("\\d{4}-\\d{2}-\\d{2}")) throw new Http.Error(400, "Pay day must be yyyy-MM-dd or blank");
             if (name.equals("category") && !DataStore.EXPENSE_CATEGORIES.contains(v)) throw new Http.Error(400, "Category must be gasoline, salary, advance, repaid or other");
             if ((name.equals("payMethod") || (name.equals("method") && table.equals("Payments"))) && !Set.of("", "cash", "gcash").contains(v))
                 throw new Http.Error(400, name + " must be cash or gcash");

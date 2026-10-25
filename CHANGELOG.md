@@ -4,6 +4,18 @@ Every update gets a new version number. It's shown in the POS (header, account m
 
 Numbering is `major.minor.patch`: **major** when the data or the way staff work changes a lot, **minor** for new features, **patch** for fixes and small changes.
 
+## 5.2.1 — 2026-10-25: staff salaries owed per pay day
+
+**Fix: the salary balance didn't change after paying a salary**
+- The balance was worked out as salary − unpaid advances, so recording a salary never lowered it (and taking an advance off a salary made it go up). It is now **Still owed**: the salary not yet paid for each pay day that has come since the employee was put on the payroll.
+- Each salary counts for one pay day. **Pay salary** asks which pay day it is for (the oldest one not fully paid is picked, then the next one), so early and late payments land on the right pay day. The pay day is saved with the salary (new `payday` column in Expenses; older salaries count for the nearest pay day and say "by date").
+- A pay day can't be paid twice: a salary more than what's left for that pay day is refused, and so is a day that isn't one of the employee's pay days.
+- Advances stay apart: an advance is not a salary payment; salary = handed over + advance taken off.
+
+**Last pay day** (Dashboard → Salaries)
+- Each employee shows their last pay day with **Paid**, **Partially paid**, **Unpaid** (it's today), **Overdue** (it has passed) or **Unknown** (before they were added to the payroll, so no record says), what was paid for it and what's left, and money already paid toward the next pay day.
+- **Pay salary** is the main button while salary is owed. **History** lists the recent pay days with the salaries that paid each one, above all records.
+
 ## 5.2.0 — 2026-10-25: MariBank emails check payments, phase 3
 
 **Reading MariBank's emails** (platform admin → **MariBank emails**)

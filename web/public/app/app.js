@@ -2128,7 +2128,7 @@
   function advanceDialog(e) {
     return formDialog({
       title: `Salary advance for ${e.name}`,
-      message: `Salary ${peso.format(e.salary)} · already advanced ${peso.format(e.advanced)} · balance ${peso.format(e.balance)}.`,
+      message: `Salary ${peso.format(e.salary)} · already advanced ${peso.format(e.advanced)} · salary still owed ${peso.format(e.owed)}.`,
       submit: 'Give advance',
       fields: [
         { name: 'amount', label: 'Advance (₱)', type: 'number', min: '0.01', step: '0.01', required: true, inputmode: 'decimal', full: true },
@@ -2150,14 +2150,23 @@
     });
   }
 
-  // Pay day: the salary, with unpaid advances taken off (they're cleared).
+  // Pay day: the salary for one pay day (the oldest not fully paid, or the next one), with unpaid advances taken off (they're cleared).
   function paySalaryDialog(e) {
+    const past = (e.periods || []).filter((p) => p.status !== 'paid' && p.payday <= e.lastPayday.payday);
+    // Owed pay days oldest first, then the next one, then older ones with no record (to enter a salary paid back then).
+    const open = past.filter((p) => p.status !== 'unknown').reverse()
+      .concat(e.upcoming && e.upcoming.status !== 'paid' ? [e.upcoming] : [], past.filter((p) => p.status === 'unknown'));
+    const leftFor = (day) => { const p = open.find((x) => x.payday === day); return p ? (p.left == null ? e.salary : p.left) : e.salary; };
+    const label = (p) => `${Payroll.shortDay(p.payday)} · ${Payroll.STATUS[p.status][2]}` + (p.status === 'unknown' ? '' : ` · ${peso.format(p.left)} left`);
+    if (!open.length) { toast(`${e.name}’s pay days are all paid, up to the next one.`); return null; }
     return formDialog({
       title: `Pay ${e.name}’s salary`,
-      message: e.advanced > 0 ? `${e.name} has ${peso.format(e.advanced)} in unpaid advances. Taking them off clears them.` : `${e.name} has no unpaid advances.`,
+      message: (e.advanced > 0 ? `${e.name} has ${peso.format(e.advanced)} in unpaid advances. Taking them off clears them.` : `${e.name} has no unpaid advances.`)
+        + ' Pick the pay day this salary is for, even when paying early or late.',
       submit: 'Record salary',
       fields: [
-        { name: 'salary', label: 'Salary (₱)', type: 'number', min: '0', step: '0.01', required: true, inputmode: 'decimal', value: e.salary.toFixed(2) },
+        { name: 'payday', label: 'For pay day', type: 'select', full: true, value: open[0].payday, options: open.map((p) => ({ value: p.payday, label: label(p) })) },
+        { name: 'salary', label: 'Salary paid (₱)', type: 'number', min: '0', step: '0.01', required: true, inputmode: 'decimal', value: leftFor(open[0].payday).toFixed(2) },
         { name: 'advanceDeducted', label: 'Advance to take off (₱)', type: 'number', min: '0', max: e.advanced, step: '0.01', inputmode: 'decimal', value: Math.min(e.advanced, e.salary).toFixed(2) },
         { name: 'method', label: 'Paid by', type: 'select', full: true, value: 'cash', options: method3() },
         { name: 'note', label: 'Note (optional)', full: true, placeholder: 'e.g. pay for Oct 18–24' },
@@ -2171,17 +2180,19 @@
         };
         inputs.salary.addEventListener('input', show);
         inputs.advanceDeducted.addEventListener('input', show);
+        inputs.payday.addEventListener('change', () => { inputs.salary.value = leftFor(inputs.payday.value).toFixed(2); show(); });
         show();
         return [line, dateField(inputs)];
       },
       onSubmit: (v) => {
         const sal = Number(v.salary) || 0, take = Number(v.advanceDeducted) || 0;
         if (sal <= 0) throw new Error('Enter the salary.');
+        if (sal > leftFor(v.payday) + 0.005) throw new Error(`Only ${peso.format(leftFor(v.payday))} is left to pay for ${Payroll.shortDay(v.payday)}.`);
         if (take > e.advanced + 0.005) throw new Error(`${e.name} has only ${peso.format(e.advanced)} in unpaid advances.`);
         if (take > sal + 0.005) throw new Error('The advance taken off is more than the salary. Take off part now; the rest stays as an advance.');
         const { salary, ...rest } = v;
         return payrollSave('POST', '/api/expenses', { ...rest, category: 'salary', employee: e.name, amount: round2(sal - take).toFixed(2), advanceDeducted: take ? take.toFixed(2) : '' },
-          `Salary for ${e.name} saved · hand over ${peso.format(round2(sal - take))}`);
+          `Salary for ${e.name} (pay day ${Payroll.shortDay(v.payday)}) saved · hand over ${peso.format(round2(sal - take))}`);
       },
     });
   }
@@ -2221,10 +2232,17 @@
           }
         } }, 'Delete') : null))) : h('div', { class: 'empty' }, 'Nothing paid yet.'));
     draw(e.history || []);
+    // Each recent pay day: how it stands and the salaries that paid it.
+    const days = (e.periods || []).length ? h('div', { class: 'moves' }, e.periods.map((p) => h('div', { class: 'move' },
+      h('div', {}, h('strong', {}, Payroll.shortDay(p.payday)), ' ', Payroll.chip(p.status)),
+      h('div', { class: 'num' }, p.status === 'unknown' ? '—' : peso.format(p.paid)),
+      h('div', { class: 'meta' }, h('span', {}, [Payroll.periodText(p, e.salary)].concat(p.records.map((x) => `${UI.fmtTime(x.time)} ${peso.format(x.amount + (x.advanceDeducted || 0))}`
+        + (x.recordedBy ? ` by ${x.recordedBy}` : ''))).join(' · ')))))) : null;
     return openDialog({
       title: `${e.name} — salary history`,
-      message: [e.salary != null ? `Salary ${peso.format(e.salary)}` : null, e.schedule ? Payroll.scheduleText(e) : null, `advanced ${peso.format(e.advanced)}`].filter(Boolean).join(' · '),
-      wide: true, submit: null, cancel: 'Close', body: h('div', { class: 'history' }, list),
+      message: [e.salary != null ? `Salary ${peso.format(e.salary)}` : null, e.schedule ? Payroll.scheduleText(e) : null, e.owed != null ? `still owed ${peso.format(e.owed)}` : null,
+        `advanced ${peso.format(e.advanced)}`].filter(Boolean).join(' · '),
+      wide: true, submit: null, cancel: 'Close', body: h('div', { class: 'history' }, days ? [h('h3', {}, 'Pay days'), days, h('h3', {}, 'All records')] : null, list),
     });
   }
 

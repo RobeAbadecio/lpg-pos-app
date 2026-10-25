@@ -52,3 +52,16 @@ senders, failed or look-alike signatures, a faked header below Gmail's), read-on
 transfer once, matching by reference and exact amount, suggest-only and auto-approve, amount-only suggestions and
 the admin's one-click approve, wrong amounts, rejected payments, "not a fee", and the app password kept out of the
 database, the page and the backups.
+
+## Salary check (5.2.1)
+
+```sh
+javac -d /tmp/lpg-check -cp "web/lib/*" web/src/*.java web/tests/*.java
+java -cp "/tmp/lpg-check:web/lib/*" PayrollCheck
+java -cp "/tmp/lpg-check:web/lib/*" SalaryCheck
+```
+
+SalaryCheck uses fixed dates on a throw-away data folder: full, partial, early, late and unpaid pay days, advances taken
+off, several unpaid pay days in a row, weekly / twice a month / monthly with month ends, refused duplicate payments,
+corrections and deletes, older salary records without a pay day, and reloading from the files.
+

@@ -137,10 +137,15 @@ final class PosApi {
                 if (!List.of("cash", "online", "check").contains(method)) throw new Http.Error(400, "Choose cash, online or check");
                 String employee = limit(r.param("employee").trim(), 60, "Employee");
                 String note = limit(r.param("note"), 120, "Note");
-                DataStore.Expense e = store.addExpense(category, amount, employee, method, who, note, deducted);
+                LocalDate payday = null;
+                if (!r.param("payday").isBlank()) {
+                    try { payday = LocalDate.parse(r.param("payday").trim()); } catch (java.time.format.DateTimeParseException x) { throw new Http.Error(400, "Choose the pay day"); }
+                }
+                DataStore.Expense e = store.addExpense(category, amount, employee, method, who, note, deducted, payday);
                 log.add(who, ip, "Expense #" + e.id() + ": " + Explain.EXPENSE_LABEL.get(category) + (employee.isEmpty() || e.employee().isEmpty() ? "" : " for " + e.employee())
                         + " ₱" + DataStore.money(amount) + (method.equals("cash") ? "" : " by " + method)
-                        + (e.advanceDeducted() > 0 ? " (₱" + DataStore.money(e.advanceDeducted()) + " advance taken off)" : "") + (note.isEmpty() ? "" : " (" + note + ")"));
+                        + (e.advanceDeducted() > 0 ? " (₱" + DataStore.money(e.advanceDeducted()) + " advance taken off)" : "")
+                        + (e.payday().isEmpty() ? "" : " for pay day " + e.payday()) + (note.isEmpty() ? "" : " (" + note + ")"));
                 r.json(201, Json.obj("id", e.id()));
             }
             case "PUT expenses/:id" -> {
