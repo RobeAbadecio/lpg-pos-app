@@ -4,6 +4,11 @@ Every update gets a new version number. It's shown in the POS (header, account m
 
 Numbering is `major.minor.patch`: **major** when the data or the way staff work changes a lot, **minor** for new features, **patch** for fixes and small changes.
 
+## 5.2.2 — 2026-10-25: printed receipts show only the tanks bought
+
+- On a swap, the printed receipt lists the tank the customer bought and the swap fee, not the empty they gave back. The empty and its brand still show on the receipt on screen, in Edit and in the records, and stock still counts it.
+- A tank the customer owes, or a new tank with no empty, is still noted on paper.
+
 ## 5.2.1 — 2026-10-25: staff salaries owed per pay day
 
 **Fix: the salary balance didn't change after paying a salary**
