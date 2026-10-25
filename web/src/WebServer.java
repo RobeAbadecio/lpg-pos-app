@@ -32,6 +32,7 @@ public final class WebServer {
         Files.createDirectories(dataDir);
         Platform platform = new Platform(dataDir.resolve("platform.db"));
         Tenants tenants = new Tenants(dataDir, platform);
+        Billing billing = new Billing(platform);
         long migrated = tenants.migrateLegacy(dataDir, System.getenv().getOrDefault("LPG_STORE_NAME", "My LPG store"));
         if (migrated > 0) System.out.println("  Copied the existing store data into business " + migrated + " (originals left in place).");
 
@@ -48,16 +49,16 @@ public final class WebServer {
             System.out.println("  Public link (share with staff): " + url);
         });
 
-        PosGate gate = new PosGate(platform, tenants, auth, publicDir.resolve("app"), shared, port, autoUser);
+        PosGate gate = new PosGate(platform, billing, tenants, auth, publicDir.resolve("app"), shared, port, autoUser);
         HttpServer pos = HttpServer.create(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), port), 0);
         pos.createContext("/", Http.wrap(gate));
         pos.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
 
         HttpServer admin = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), adminPort), 0);
-        admin.createContext("/", Http.wrap(new AdminApi(platform, tenants, gate, auth, tunnel, publicDir.resolve("admin"), shared, port, adminPort)));
+        admin.createContext("/", Http.wrap(new AdminApi(platform, billing, tenants, gate, auth, tunnel, publicDir.resolve("admin"), shared, port, adminPort)));
         admin.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
 
-        // Backup at start-up, then once a day; a failed backup is logged and never stops the POS.
+        // Backup and this month's invoices at start-up, then once a day; a failure is logged and never stops the POS.
         ScheduledExecutorService daily = Executors.newSingleThreadScheduledExecutor(r -> {
             Thread t = new Thread(r, "backups");
             t.setDaemon(true);
@@ -68,6 +69,11 @@ public final class WebServer {
                 Backups.run(platform, tenants);
             } catch (Exception e) {
                 System.err.println("  Backup failed: " + e.getMessage());
+            }
+            try {
+                billing.ensureInvoices();
+            } catch (Exception e) {
+                System.err.println("  Invoices failed: " + e.getMessage());
             }
         }, 0, 24, TimeUnit.HOURS);
 

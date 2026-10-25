@@ -196,8 +196,27 @@
     $('demo-note').hidden = !me.demo;
     $('store-label').textContent = me.business ? me.business.name : '';
     $('team-link').hidden = me.role !== 'owner' || !!me.demo;
+    $('billing-link').hidden = me.role !== 'owner' || !!me.demo;
+    showBilling(me);
     updateDashboardAccess();
     go(location.hash.slice(1) || 'sell');
+  }
+
+  // Subscription reminder: the owner from a week before it's due, everyone once it's late.
+  function showBilling(me) {
+    const b = me.billing || {}, owner = me.role === 'owner', bar = $('billing-bar');
+    const day = (s) => s ? new Date(s + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric' }) : '';
+    let text = null;
+    if (b.state === 'unpaid') text = owner ? 'Welcome! Pay the first month on the Billing page to start saving sales. You can look around until then.'
+      : 'The store hasn’t paid for LPG POS yet, so new records can’t be saved. Ask the store owner to pay.';
+    else if (b.state === 'due' && owner) text = 'Your LPG POS subscription is paid until ' + day(b.paidUntil) + '. Pay now to keep it running.';
+    else if (b.state === 'grace') text = owner ? 'Your LPG POS payment is late. New records stop saving on ' + day(b.lockDate) + ' unless it’s paid.'
+      : 'The store’s LPG POS payment is late. Please remind the store owner.';
+    else if (b.state === 'overdue') text = owner ? 'Your LPG POS subscription is overdue, so new records can’t be saved. You can still look at everything.'
+      : 'The store’s LPG POS subscription is overdue, so new records can’t be saved. Ask the store owner to pay.';
+    bar.hidden = !text || !!me.demo;
+    bar.classList.toggle('is-locked', b.state === 'overdue' || b.state === 'unpaid');
+    clear(bar, h('span', {}, text || ''), owner ? h('a', { class: 'btn small primary', href: '/billing.html' }, 'Pay now') : null);
   }
 
   // The Dashboard tab shows only for staff the admin has allowed to see it.

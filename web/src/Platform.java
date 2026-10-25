@@ -13,6 +13,8 @@ import java.util.*;
  * Business Admin, at most one active per business, enforced by an index) and "staff". The password hash of an
  * active account lives in its business's WebUsers.csv like before; a pending account keeps it here until approved.
  *
+ * Billing (invoices, payments) shares this connection and lock; see Billing.
+ *
  * One connection, every method synchronized: there is one server process, and SQLite serialises writes anyway.
  */
 final class Platform implements AutoCloseable {
@@ -21,7 +23,7 @@ final class Platform implements AutoCloseable {
     private static final SecureRandom RANDOM = new SecureRandom();
 
     record Business(long id, String code, String name, String contactName, String phone, String email, String address,
-                    String status, String created, String decided) {}
+                    String status, String created, String decided, String paidUntil, boolean billingExempt) {}
 
     record Account(String username, long businessId, String role, String status, String fullName, String created,
                    String pendingSalt, String pendingHash) {
@@ -67,6 +69,42 @@ final class Platform implements AutoCloseable {
               detail TEXT NOT NULL DEFAULT ''
             );
             CREATE INDEX audit_business ON audit(business_id, id);
+            """,
+            // 5.1.0: monthly billing. Amounts are in centavos. Business 1 is the platform owner's own store: no fee.
+            """
+            ALTER TABLE businesses ADD COLUMN paid_until TEXT NOT NULL DEFAULT '';
+            ALTER TABLE businesses ADD COLUMN billing_exempt INTEGER NOT NULL DEFAULT 0;
+            UPDATE businesses SET billing_exempt = 1 WHERE id = 1;
+            CREATE TABLE invoices (
+              id INTEGER PRIMARY KEY,
+              business_id INTEGER NOT NULL REFERENCES businesses(id),
+              period_start TEXT NOT NULL,
+              period_end TEXT NOT NULL,
+              amount INTEGER NOT NULL CHECK (amount > 0),
+              status TEXT NOT NULL CHECK (status IN ('open','paid','void')),
+              created TEXT NOT NULL,
+              paid TEXT NOT NULL DEFAULT ''
+            );
+            CREATE UNIQUE INDEX one_open_invoice ON invoices(business_id) WHERE status = 'open';
+            CREATE TABLE payments (
+              id INTEGER PRIMARY KEY,
+              invoice_id INTEGER NOT NULL REFERENCES invoices(id),
+              business_id INTEGER NOT NULL REFERENCES businesses(id),
+              reference TEXT NOT NULL,
+              amount INTEGER NOT NULL CHECK (amount > 0),
+              paid_on TEXT NOT NULL,
+              receipt TEXT NOT NULL DEFAULT '',
+              submitted_by TEXT NOT NULL,
+              submitted TEXT NOT NULL,
+              status TEXT NOT NULL CHECK (status IN ('pending','approved','rejected')),
+              decided TEXT NOT NULL DEFAULT '',
+              decided_by TEXT NOT NULL DEFAULT '',
+              note TEXT NOT NULL DEFAULT ''
+            );
+            CREATE UNIQUE INDEX payment_reference ON payments(reference) WHERE status != 'rejected';
+            CREATE UNIQUE INDEX one_pending_payment ON payments(invoice_id) WHERE status = 'pending';
+            CREATE INDEX payments_status ON payments(status, id);
+            CREATE INDEX invoices_business ON invoices(business_id, id);
             """,
     };
 
@@ -152,6 +190,7 @@ final class Platform implements AutoCloseable {
     synchronized long createActive(String name, String actor) {
         return tx(() -> {
             long id = createBusiness(name, "", "", "", "", "active");
+            update("UPDATE businesses SET billing_exempt = 1 WHERE id = ?", id); // the platform owner's own store
             audit(actor, id, "Created business", name);
             return id;
         });
@@ -185,6 +224,7 @@ final class Platform implements AutoCloseable {
             if (b.status().equals("rejected")) throw new Http.Error(409, "This registration was rejected");
             update("UPDATE businesses SET status = ?, decided = ? WHERE id = ?", status, now(), id);
             if (b.status().equals("pending") && status.equals("active")) {
+                update("UPDATE businesses SET paid_until = ? WHERE id = ?", Billing.trialEnd(this), id);
                 update("UPDATE accounts SET status = 'active' WHERE business_id = ? AND role = 'owner' AND status = 'pending'", id);
             }
             if (status.equals("rejected")) update("DELETE FROM accounts WHERE business_id = ? AND status = 'pending'", id);
@@ -295,6 +335,7 @@ final class Platform implements AutoCloseable {
         return tx(() -> {
             if (accountRow(username) != null) throw new Http.Error(409, "That username is taken");
             long id = createBusiness(name, contactName, phone, email, address, "active");
+            update("UPDATE businesses SET paid_until = ? WHERE id = ?", Billing.trialEnd(this), id);
             insertAccount(username, id, "owner", "active", contactName, salt, hash);
             audit(actor, id, "Created business", name + " (owner " + username + ")");
             return id;
@@ -367,7 +408,7 @@ final class Platform implements AutoCloseable {
     }
 
     /** Runs work in one transaction (nested calls join the outer one). */
-    private <T> T tx(Work<T> work) {
+    <T> T tx(Work<T> work) {
         try {
             boolean outer = db.getAutoCommit();
             if (outer) db.setAutoCommit(false);
@@ -388,7 +429,7 @@ final class Platform implements AutoCloseable {
         }
     }
 
-    private <T> List<T> query(String sql, RowMapper<T> map, Object... args) {
+    <T> List<T> query(String sql, RowMapper<T> map, Object... args) {
         try (PreparedStatement ps = db.prepareStatement(sql)) {
             bind(ps, args);
             try (ResultSet rs = ps.executeQuery()) {
@@ -401,7 +442,7 @@ final class Platform implements AutoCloseable {
         }
     }
 
-    private int update(String sql, Object... args) {
+    int update(String sql, Object... args) {
         try (PreparedStatement ps = db.prepareStatement(sql)) {
             bind(ps, args);
             return ps.executeUpdate();
@@ -418,7 +459,7 @@ final class Platform implements AutoCloseable {
     private static Business business(ResultSet rs) throws SQLException {
         return new Business(rs.getLong("id"), rs.getString("code"), rs.getString("name"), rs.getString("contact_name"),
                 rs.getString("phone"), rs.getString("email"), rs.getString("address"), rs.getString("status"),
-                rs.getString("created"), rs.getString("decided"));
+                rs.getString("created"), rs.getString("decided"), rs.getString("paid_until"), rs.getInt("billing_exempt") == 1);
     }
 
     private static Account account(ResultSet rs) throws SQLException {
@@ -434,7 +475,7 @@ final class Platform implements AutoCloseable {
         return sb.toString();
     }
 
-    private static String now() {
+    static String now() {
         return LocalDateTime.now().withNano(0).format(DataStore.TIME);
     }
 }

@@ -21,6 +21,7 @@ final class AdminApi implements Http.Handler {
     static final String ADMIN = "platform admin";
 
     private final Platform platform;
+    private final Billing billing;
     private final Tenants tenants;
     private final PosGate gate;
     private final Auth auth;
@@ -32,8 +33,9 @@ final class AdminApi implements Http.Handler {
     private final String COOKIE;
     private final long startedAt = System.currentTimeMillis();
 
-    AdminApi(Platform platform, Tenants tenants, PosGate gate, Auth auth, Tunnel tunnel, Path appRoot, Path sharedRoot, int posPort, int adminPort) {
+    AdminApi(Platform platform, Billing billing, Tenants tenants, PosGate gate, Auth auth, Tunnel tunnel, Path appRoot, Path sharedRoot, int posPort, int adminPort) {
         this.platform = platform;
+        this.billing = billing;
         this.tenants = tenants;
         this.gate = gate;
         this.auth = auth;
@@ -65,7 +67,7 @@ final class AdminApi implements Http.Handler {
         if (admin == null) throw new Http.Error(401, "Please sign in");
 
         String[] seg = r.path.substring("/api/".length()).split("/");
-        if (seg[0].equals("platform") || seg[0].equals("businesses") || seg[0].equals("accounts")) {
+        if (List.of("platform", "businesses", "accounts", "billing", "payments").contains(seg[0])) {
             platformRoute(r, admin, seg);
             return;
         }
@@ -312,6 +314,45 @@ final class AdminApi implements Http.Handler {
                 else for (Platform.Account a : platform.accounts(b)) auth.revokeUser(a.username(), null);
                 r.json(200, Json.obj("ok", true));
             }
+            case "POST businesses/:id/billing" -> {
+                long b = businessId(id);
+                String exempt = r.param("exempt"), until = r.param("paidUntil");
+                if (!exempt.isEmpty()) billing.setExempt(b, exempt.equals("1"), ADMIN);
+                if (!until.isEmpty()) billing.setPaidUntil(b, Billing.date(until, "Paid until"), ADMIN);
+                r.json(200, Json.obj("ok", true));
+            }
+            case "GET billing" -> r.json(200, billingOverview());
+            case "PUT billing" -> {
+                billing.saveSettings(r.param("on").equals("1"), Billing.centavos(r.param("price"), "Price"),
+                        intParam(r, "graceDays", "Grace days"), intParam(r, "trialDays", "Free days"),
+                        PosGate.text(r, "payee", "Account name", 0, 120, false), PosGate.text(r, "note", "Payment note", 0, 300, false), ADMIN);
+                r.json(200, Json.obj("ok", true));
+            }
+            case "GET billing/:id", "POST billing/:id" -> {
+                if (!id.equals("qr")) throw new Http.Error(404, "Unknown endpoint");
+                if (r.method.equals("POST")) {
+                    r.allowLargeBody();
+                    billing.saveQr(Billing.image(r.form().getOrDefault("image", "")), ADMIN);
+                    r.json(200, Json.obj("ok", true));
+                } else {
+                    Path qr = billing.qrFile();
+                    if (qr == null) throw new Http.Error(404, "No QR code yet");
+                    r.image(qr.toString().endsWith(".png") ? "image/png" : "image/jpeg", java.nio.file.Files.readAllBytes(qr));
+                }
+            }
+            case "GET payments/:id/receipt" -> {
+                Billing.Payment p = billing.payment(paymentId(id));
+                if (p == null || p.receipt().isEmpty()) throw new Http.Error(404, "No picture for this payment");
+                r.image(p.receipt().endsWith(".png") ? "image/png" : "image/jpeg", java.nio.file.Files.readAllBytes(billing.files().resolve(p.receipt())));
+            }
+            case "POST payments/:id/approve" -> {
+                billing.approve(paymentId(id), ADMIN);
+                r.json(200, Json.obj("ok", true));
+            }
+            case "POST payments/:id/reject" -> {
+                billing.reject(paymentId(id), PosGate.text(r, "note", "Reason", 0, 200, false), ADMIN);
+                r.json(200, Json.obj("ok", true));
+            }
             case "POST businesses/:id/select" -> {
                 long b = businessId(id);
                 selected.put(admin.token, b);
@@ -362,6 +403,38 @@ final class AdminApi implements Http.Handler {
         throw new Http.Error(404, "No such business");
     }
 
+    private static long paymentId(String raw) {
+        try {
+            return Long.parseLong(raw);
+        } catch (NumberFormatException e) {
+            throw new Http.Error(404, "No such payment");
+        }
+    }
+
+    private static int intParam(Http.Req r, String name, String label) throws IOException {
+        try {
+            return Integer.parseInt(r.param(name));
+        } catch (NumberFormatException e) {
+            throw new Http.Error(400, label + ": enter a whole number");
+        }
+    }
+
+    /** Billing settings and the payments queue: waiting ones first, with what to check before approving. */
+    private Map<String, Object> billingOverview() {
+        Map<Long, String> names = new HashMap<>();
+        for (Platform.Business b : platform.businesses()) names.put(b.id(), b.name());
+        List<Object> queue = new ArrayList<>();
+        for (Billing.Payment p : billing.queue()) {
+            Map<String, Object> out = Billing.paymentOut(p);
+            Billing.Invoice inv = billing.invoice(p.invoiceId());
+            out.put("business", names.get(p.businessId()));
+            out.put("invoice", inv == null ? null : Billing.invoiceOut(inv));
+            out.put("warnings", p.status().equals("pending") ? billing.warnings(p) : List.of());
+            queue.add(out);
+        }
+        return Json.obj("settings", billing.settings(), "payments", queue);
+    }
+
     private Map<String, Object> platformOverview(Auth.Session admin) {
         Map<Long, Integer> online = new HashMap<>();
         for (Auth.Session s : auth.active()) online.merge(s.businessId, 1, Integer::sum);
@@ -374,7 +447,7 @@ final class AdminApi implements Http.Handler {
                     "owner", owner == null ? null : owner.username(),
                     "staff", accounts.stream().filter(a -> !a.owner() && a.active()).count(),
                     "pendingStaff", accounts.stream().filter(a -> !a.owner() && a.status().equals("pending")).count(),
-                    "online", online.getOrDefault(b.id(), 0)));
+                    "online", online.getOrDefault(b.id(), 0), "billingExempt", b.billingExempt(), "billing", billing.summary(b)));
         }
         Long sel = selected.get(admin.token);
         return Json.obj("businesses", out, "selected", sel, "health", Backups.health(platform, tenants));

@@ -51,7 +51,7 @@ final class Http {
     }
 
     static final class Req {
-        private static final int MAX_BODY = 64 * 1024;
+        private int maxBody = 64 * 1024;
         final HttpExchange ex;
         final String method;
         final String path;
@@ -76,11 +76,21 @@ final class Http {
 
         Map<String, String> form() throws IOException {
             if (form == null) {
-                byte[] body = ex.getRequestBody().readNBytes(MAX_BODY + 1);
-                if (body.length > MAX_BODY) throw new Error(413, "Request too large");
+                byte[] body = ex.getRequestBody().readNBytes(maxBody + 1);
+                if (body.length > maxBody) throw new Error(413, "Request too large");
                 form = parseForm(new String(body, StandardCharsets.UTF_8));
             }
             return form;
+        }
+
+        /** For the few calls that carry a picture: allows a body of up to 4 MB. Call before form(). */
+        void allowLargeBody() {
+            maxBody = 4 * 1024 * 1024;
+        }
+
+        /** A private picture (receipt, QR code): never cached. */
+        void image(String type, byte[] bytes) throws IOException {
+            send(200, type, bytes, "private, no-store");
         }
 
         /** Trimmed single-line form value ("" when absent). */
@@ -183,7 +193,7 @@ final class Http {
                     + "frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
             boolean noBody = method.equals("HEAD") || bytes.length == 0;
             String accept = header("Accept-Encoding");
-            if (!noBody && bytes.length > 1024 && accept != null && accept.contains("gzip") && !type.startsWith("image/png")) {
+            if (!noBody && bytes.length > 1024 && accept != null && accept.contains("gzip") && !type.equals("image/png") && !type.equals("image/jpeg")) {
                 ByteArrayOutputStream buf = new ByteArrayOutputStream(bytes.length / 4);
                 try (GZIPOutputStream gz = new GZIPOutputStream(buf)) {
                     gz.write(bytes);

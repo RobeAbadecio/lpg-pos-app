@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Billing · LPG POS</title>
+  <link rel="icon" href="/shared/icon.svg">
+  <link rel="stylesheet" href="/shared/base.css">
+  <link rel="stylesheet" href="/shared/account.css">
+</head>
+<body>
+  <main class="acct-shell" id="main-content">
+    <div class="acct-top">
+      <img src="/shared/icon.svg" alt="" width="32" height="32">
+      <div><div class="title" id="store-name">Billing</div><div class="muted">LPG POS subscription</div></div>
+      <span class="spacer"></span>
+      <a class="btn" href="/">← Back to POS</a>
+    </div>
+    <p id="problem" class="acct-error" role="alert" hidden></p>
+
+    <section class="card acct-card" id="status-card" hidden>
+      <div class="acct-top"><h2>Subscription</h2><span id="state"></span></div>
+      <p id="status-text"></p>
+    </section>
+
+    <section class="card acct-card" id="pay-card" hidden>
+      <div class="acct-top"><h2>Pay invoice <span id="inv-no"></span></h2><span class="spacer"></span><span class="muted" id="inv-period"></span></div>
+      <div class="pay-grid">
+        <div class="pay-qr">
+          <img id="qr" alt="QR code for paying LPG POS" hidden>
+          <p class="muted" id="no-qr" hidden>The QR code isn’t set up yet. Contact LPG POS support for payment details.</p>
+          <p class="pay-payee" id="payee"></p>
+        </div>
+        <div class="pay-steps">
+          <div class="pay-amount"><span class="muted">Amount to pay</span><b id="amount"></b></div>
+          <p class="acct-hint">Pay this exact amount, centavos included. It tells us which store paid.</p>
+          <ol class="steps">
+            <li>Open your bank or e-wallet app (GCash, Maya, MariBank, GoTyme…) and choose Scan QR.</li>
+            <li>Scan the QR code and type the amount above.</li>
+            <li>After paying, copy the reference number from the receipt into the form below.</li>
+          </ol>
+          <p class="acct-hint" id="note"></p>
+        </div>
+      </div>
+
+      <div class="acct-ok" id="waiting" hidden></div>
+      <form id="pay-form" class="acct-form" novalidate>
+        <h3 class="pay-h">I’ve paid</h3>
+        <div class="row">
+          <label class="field"><span>Reference number</span><input class="input" name="reference" maxlength="40" required autocapitalize="characters" spellcheck="false" inputmode="text"></label>
+          <label class="field"><span>Amount paid (₱)</span><input class="input" name="amount" required inputmode="decimal"></label>
+        </div>
+        <div class="row">
+          <label class="field"><span>Date paid</span><input class="input" name="paidOn" type="date" required></label>
+          <label class="field"><span>Receipt screenshot <span class="muted">(optional)</span></span><input class="input" name="receipt" type="file" accept="image/png,image/jpeg"></label>
+        </div>
+        <p class="acct-error" role="alert" hidden></p>
+        <div><button class="btn primary" type="submit">Send for checking</button></div>
+      </form>
+    </section>
+
+    <section class="card acct-card" id="history-card" hidden>
+      <h2>Payments</h2>
+      <div class="table-wrap"><table class="acct-table stack">
+        <thead><tr><th>Sent</th><th>Invoice</th><th>Amount</th><th>Reference</th><th>Status</th></tr></thead>
+        <tbody id="payment-rows"></tbody>
+      </table></div>
+    </section>
+  </main>
+  <script src="/shared/ui.js"></script>
+  <script src="/billing.js"></script>
+</body>
+</html>
