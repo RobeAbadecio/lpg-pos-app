@@ -206,7 +206,7 @@
     $('qr-thumb').hidden = !settings.qr;
     if (settings.qr) $('qr-thumb').src = '/api/billing/qr?' + Date.now();
     $('qr-hint').textContent = settings.qr ? 'Owners see this QR on their Billing page. Pick a new file to replace it.'
-      : 'Upload your GoTyme QR (PNG or JPEG, at most 2 MB). Owners see it on their Billing page.';
+      : 'Upload your MariBank QR (PNG or JPEG, at most 2 MB). Owners see it on their Billing page.';
 
     const waiting = payments.filter((p) => p.status === 'pending').length;
     $('queue-count').textContent = waiting ? waiting + ' waiting' : 'Nothing waiting';
@@ -221,7 +221,7 @@
     if (p.status === 'pending') {
       actions.push(btn('Approve', async () => {
         if (await confirmDialog('Approve ' + peso(p.amount) + ' from ' + p.business + '?',
-          'Only if your GoTyme history shows this payment (reference ' + p.reference + '). The store gets one more month.', 'Approve')) payAction(p, 'approve', null, 'Approved');
+          'Only if your MariBank history shows this payment (reference ' + p.reference + '). The store gets one more month.', 'Approve')) payAction(p, 'approve', null, 'Approved');
       }, 'btn primary small'));
       actions.push(btn('Reject', () => formDialog({ title: 'Reject payment ' + p.reference + '?',
         message: 'The owner sees the reason and can send it again.',

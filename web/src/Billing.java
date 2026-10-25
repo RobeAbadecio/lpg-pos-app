@@ -8,13 +8,13 @@ import java.time.format.DateTimeParseException;
 import java.util.*;
 
 /**
- * Monthly subscription per business, paid by GoTyme / InstaPay QR and checked by the platform admin.
+ * Monthly subscription per business, paid by QR Ph / InstaPay QR (to MariBank) and checked by the platform admin.
  *
  * A business pays first: until its first payment is approved (paid_until empty) it is "unpaid" and can't save
  * records. The admin can give free days instead (setting billing_trial_days, 0 by default).
  *
  * A business is paid up to paid_until (a date, inclusive). From DUE_SOON_DAYS before that date it has one open invoice
- * for the next month. Each open invoice gets its own amount (the price plus 1–99 centavos), so a payment in the GoTyme
+ * for the next month. Each open invoice gets its own amount (the price plus 1–99 centavos), so a payment in the MariBank
  * history can be told apart from the others. After paid_until come the grace days (the POS works, with a warning);
  * after those the business is overdue: it can still sign in, look at its records and pay, but can't save anything.
  *
@@ -200,7 +200,7 @@ final class Billing {
                     throw new Http.Error(409, "A payment for this invoice is already waiting to be checked");
                 }
                 if (!q("SELECT 1 FROM payments WHERE reference = ? AND status != 'rejected'", rs -> 1, reference).isEmpty()) {
-                    throw new Http.Error(409, "This reference number was already sent. Check the number on your GoTyme receipt.");
+                    throw new Http.Error(409, "This reference number was already sent. Check the number on your payment receipt.");
                 }
                 platform.update("INSERT INTO payments(invoice_id, business_id, reference, amount, paid_on, submitted_by, submitted, status) "
                         + "VALUES(?,?,?,?,?,?,?, 'pending')", invoiceId, businessId, reference, amount, paidOn, actor, Platform.now());
@@ -353,10 +353,10 @@ final class Billing {
 
     // ---------------------------------------------------------------- input
 
-    /** GoTyme / InstaPay reference: letters and digits, spaces and dashes dropped. */
+    /** InstaPay / bank reference: letters and digits, spaces and dashes dropped. */
     static String reference(String raw) {
         String r = raw.replaceAll("[\\s-]", "").toUpperCase(Locale.ROOT);
-        if (!r.matches("[A-Z0-9]{6,32}")) throw new Http.Error(400, "Reference number: 6–32 letters or digits, as shown on the GoTyme receipt");
+        if (!r.matches("[A-Z0-9]{6,32}")) throw new Http.Error(400, "Reference number: 6–32 letters or digits, as shown on your payment receipt");
         return r;
     }
 

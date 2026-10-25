@@ -7,13 +7,13 @@ Numbering is `major.minor.patch`: **major** when the data or the way staff work 
 ## 5.1.0 — 2026-10-25: monthly billing, phase 2
 
 **Monthly fee per business** (platform admin → Billing settings)
-- Price per month (₱10 to start) and grace days after the paid date (7). Billing is **off** until the admin turns it on, after uploading the GoTyme QR code. Business 1 (the platform owner's own store) never pays; any store can be made free on its **Billing** button.
+- Price per month (₱10 to start) and grace days after the paid date (7). Billing is **off** until the admin turns it on, after uploading the MariBank QR code. Business 1 (the platform owner's own store) never pays; any store can be made free on its **Billing** button.
 - **Pay first:** when billing is on, a business that has never paid (a new one once approved, and every existing one when billing is turned on) can sign in and look around, but can't save anything until its first payment is approved. Its first month starts on the day of approval. The admin can give free days instead (setting, 0 by default).
-- Each business is paid up to a date. A week before that date it gets an invoice for the next month. Every open invoice has its own amount (the price plus a few centavos, for example ₱10.37) so payments are easy to tell apart in the GoTyme history.
+- Each business is paid up to a date. A week before that date it gets an invoice for the next month. Every open invoice has its own amount (the price plus a few centavos, for example ₱10.37) so payments are easy to tell apart in the MariBank history.
 - After the paid date the POS keeps working for the grace days, with a warning bar. After that the store is **overdue**: everyone can still sign in, see their records and pay, but new records can't be saved until the payment is approved.
 
 **Paying** (store owner → account menu → **Billing**)
-- Shows the amount, the GoTyme QR and short steps. The owner types the reference number from their receipt, the amount and date, and may add a screenshot (shrunk on the phone before sending; PNG or JPEG only, checked by content).
+- Shows the amount, the payment QR and short steps. The owner types the reference number from their receipt, the amount and date, and may add a screenshot (shrunk on the phone before sending; PNG or JPEG only, checked by content).
 - A reference number can be used once across all businesses; an invoice can have one payment waiting at a time.
 
 **Checking payments** (platform admin → **Payments to check**)

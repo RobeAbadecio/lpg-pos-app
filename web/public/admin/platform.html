@@ -37,7 +37,7 @@
 
       <section class="card acct-card" style="margin-top:16px">
         <div class="acct-top"><h2>Payments to check</h2><span class="muted" id="queue-count"></span></div>
-        <p class="acct-hint">Open your GoTyme app and find a payment with the same amount and reference before approving. Approving adds one month.</p>
+        <p class="acct-hint">Open your MariBank app and find a payment with the same amount and reference before approving. Approving adds one month.</p>
         <div class="table-wrap"><table class="acct-table stack">
           <thead><tr><th>Sent</th><th>Business</th><th>Invoice</th><th>Paid</th><th>Reference</th><th>Status</th><th></th></tr></thead>
           <tbody id="payment-rows"></tbody>
@@ -54,7 +54,7 @@
           </div>
           <div class="row">
             <label class="field"><span>Grace days after the paid date</span><input class="input" name="graceDays" type="number" min="0" max="60" required><small class="muted">The POS keeps working, with a warning. After these days, new records can’t be saved.</small></label>
-            <label class="field"><span>Account name shown under the QR</span><input class="input" name="payee" maxlength="120" placeholder="e.g. R. Abadecio · GoTyme"></label>
+            <label class="field"><span>Account name shown under the QR</span><input class="input" name="payee" maxlength="120" placeholder="e.g. R. Abadecio · MariBank"></label>
           </div>
           <label class="field"><span>Note for payers <span class="muted">(optional)</span></span><input class="input" name="note" maxlength="300"></label>
           <div><button class="btn primary" type="submit">Save billing settings</button></div>
@@ -63,7 +63,7 @@
           <img class="qr-thumb" id="qr-thumb" alt="Current payment QR code" hidden>
           <div>
             <b>Payment QR code</b>
-            <p class="acct-hint" id="qr-hint">Upload your GoTyme QR (PNG or JPEG, at most 2 MB). Owners see it on their Billing page.</p>
+            <p class="acct-hint" id="qr-hint">Upload your MariBank QR (PNG or JPEG, at most 2 MB). Owners see it on their Billing page.</p>
             <input type="file" id="qr-file" accept="image/png,image/jpeg" aria-label="Upload payment QR code">
           </div>
         </div>

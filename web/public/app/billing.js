@@ -1,4 +1,4 @@
-// Billing page for the store owner: what is owed, the GoTyme QR, sending a payment's reference number, past payments.
+// Billing page for the store owner: what is owed, the payment QR, sending a payment's reference number, past payments.
 (function () {
   const { h, clear, toast, request } = UI;
   const $ = (id) => document.getElementById(id);

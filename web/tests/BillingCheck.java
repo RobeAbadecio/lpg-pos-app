@@ -84,7 +84,7 @@ public class BillingCheck {
         // ---- settings
         check(admin.status("PUT", "/api/billing", "on", "1", "price", "abc", "graceDays", "7", "trialDays", "7", "payee", "", "note", "") == 400, "bad price refused");
         check(admin.status("PUT", "/api/billing", "on", "1", "price", "10.00", "graceDays", "7", "trialDays", "0",
-                "payee", "R. Abadecio (GoTyme)", "note", "Put your store name in the message") == 200, "billing turned on");
+                "payee", "R. Abadecio (MariBank)", "note", "Put your store name in the message") == 200, "billing turned on");
         check(admin.send("GET", "/api/billing").body().contains("\"price\":1000"), "price saved in centavos");
 
         // ---- pay first: an existing business is locked until its first payment
