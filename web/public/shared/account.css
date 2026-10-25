@@ -60,3 +60,19 @@ body { margin: 0; background: var(--page); color: var(--ink); font-family: var(-
 .receipt-img { max-width: 100%; max-height: 70vh; display: block; margin: 0 auto; border-radius: var(--radius-sm); }
 .qr-thumb { width: 120px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: #fff; }
 .acct-form .check { display: flex; gap: 8px; align-items: center; min-height: 44px; }
+
+/* 5.3: store look (Team page) */
+.logo-row { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+.logo-box { width: 120px; height: 80px; border: 1px dashed var(--border-strong); border-radius: var(--radius-sm); display: grid; place-items: center; background: #fff; overflow: hidden; }
+.logo-box img { max-width: 110px; max-height: 70px; object-fit: contain; }
+.logo-actions { display: grid; gap: 8px; justify-items: start; flex: 1; min-width: 200px; }
+.logo-actions .acct-hint { margin: 0; }
+.swatches { border: 0; margin: 0; padding: 0; }
+.swatches legend { font-size: 14px; font-weight: 600; margin-bottom: 8px; padding: 0; }
+.swatch-row { display: flex; flex-wrap: wrap; gap: 10px; }
+.swatch { display: grid; justify-items: center; gap: 4px; font-size: 12px; color: var(--ink-2); cursor: pointer; }
+.swatch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.swatch i { width: 40px; height: 40px; border-radius: 50%; border: 3px solid var(--surface); box-shadow: 0 0 0 1px var(--border-strong); }
+.swatch input:checked + i { box-shadow: 0 0 0 3px var(--ink); }
+.swatch input:focus-visible + i { outline: 2px solid var(--accent); outline-offset: 4px; }
+.acct-top img.is-logo { width: 36px; height: 36px; object-fit: contain; border-radius: 8px; background: #fff; }

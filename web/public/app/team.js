@@ -1,4 +1,4 @@
-// Team page for the store owner: approve, add, disable staff; dashboard access; store details.
+// Team page for the store owner: approve, add, disable staff; dashboard access; store details and look.
 (function () {
   const { h, clear, toast, request, formDialog, confirmDialog } = UI;
   const $ = (id) => document.getElementById(id);
@@ -80,6 +80,96 @@
     }
   });
 
+  // ---- store look: logo, color, receipt message, setup guide
+  function showLogo(brand) {
+    $('logo-img').hidden = !brand.logo;
+    $('logo-none').hidden = !!brand.logo;
+    $('logo-remove').hidden = !brand.logo;
+    if (brand.logo) $('logo-img').src = brand.logo;
+  }
+
+  function swatches(colors, current) {
+    clear($('swatches'), colors.map((c) => h('label', { class: 'swatch' },
+      h('input', { type: 'radio', name: 'color', value: c, checked: c === current,
+        onchange: () => { document.documentElement.dataset.brand = c; if (!c) delete document.documentElement.dataset.brand; } }),
+      h('i', { style: 'background:' + Brand.colors[c] }), Brand.names[c])));
+  }
+
+  // Phone photos are big: shrink to at most 320 px wide or tall before sending (PNG keeps a clear background).
+  // (Read as a data: URL: the page's security rules don't allow blob: pictures.)
+  function shrink(file) {
+    return new Promise((resolve, reject) => {
+      const bad = () => reject(new Error('That file isn’t a picture this browser can open. Try a PNG or JPG.'));
+      const reader = new FileReader();
+      reader.onerror = bad;
+      reader.onload = () => {
+        const img = new Image();
+        img.onload = () => {
+          const k = Math.min(1, 320 / Math.max(img.width, img.height));
+          const c = document.createElement('canvas');
+          c.width = Math.max(1, Math.round(img.width * k));
+          c.height = Math.max(1, Math.round(img.height * k));
+          c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+          let data = c.toDataURL('image/png');
+          if (data.length > 260000) data = c.toDataURL('image/jpeg', 0.85);
+          resolve(data);
+        };
+        img.onerror = bad;
+        img.src = reader.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  $('logo-file').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      const res = await request('POST', '/api/business/logo', { image: await shrink(file) });
+      showLogo(res.brand);
+      Brand.apply(res.brand);
+      toast('Logo saved');
+    } catch (ex) {
+      toast(ex.message, true);
+    }
+  });
+
+  $('logo-remove').addEventListener('click', async () => {
+    if (!await confirmDialog('Remove the logo?', 'The POS and receipts go back to the LPG POS icon. You can upload a logo again any time.', 'Remove')) return;
+    try {
+      const res = await request('DELETE', '/api/business/logo');
+      showLogo(res.brand);
+      Brand.apply(res.brand);
+      toast('Logo removed');
+    } catch (ex) {
+      toast(ex.message, true);
+    }
+  });
+
+  $('look-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const f = e.target;
+    const picked = f.querySelector('input[name=color]:checked');
+    try {
+      const res = await request('PUT', '/api/business/brand', { color: picked ? picked.value : '', receiptNote: f.receiptNote.value.trim() });
+      Brand.apply(res.brand);
+      toast('Look saved');
+    } catch (ex) {
+      toast(ex.message, true);
+    }
+  });
+
+  $('guide-show').addEventListener('click', async () => {
+    try {
+      await request('POST', '/api/guide', { hidden: '0' });
+      $('guide-again').hidden = true;
+      toast('The setup guide is back on the New sale page');
+    } catch (ex) {
+      toast(ex.message, true);
+    }
+  });
+
   async function load() {
     const team = await request('GET', '/api/team');
     $('store-code').textContent = team.code;
@@ -97,10 +187,17 @@
     }
     if (me.role !== 'owner') { fail('Only the store owner can manage staff.'); return; }
     $('store-name').textContent = me.business.name;
+    Brand.apply(me.brand);
     const b = await request('GET', '/api/business');
     for (const k of ['name', 'contactName', 'phone', 'email', 'address']) $('store-form')[k].value = b[k] || '';
+    showLogo(b.brand);
+    swatches(b.colors, b.brand.color);
+    $('look-form').receiptNote.value = b.brand.receiptNote || '';
     $('staff-card').hidden = false;
     $('store-card').hidden = false;
+    $('look').hidden = false;
+    request('GET', '/api/guide').then((g) => { $('guide-again').hidden = !g.hidden || g.steps.every((x) => x.done); }, () => {});
+    if (location.hash === '#look') $('look').scrollIntoView();
     await load().catch((e) => fail(e.message));
   })();
 })();

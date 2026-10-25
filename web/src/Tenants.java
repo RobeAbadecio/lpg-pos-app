@@ -25,10 +25,13 @@ final class Tenants {
 
     Path root() { return root; }
 
+    /** The business's own folder (its CSV files, activity log and logo). */
+    Path dir(long businessId) { return root.resolve(Long.toString(businessId)); }
+
     Tenant get(long businessId) {
         return open.computeIfAbsent(businessId, id -> {
             try {
-                Path dir = root.resolve(Long.toString(id));
+                Path dir = dir(id);
                 return new Tenant(id, new DataStore(dir), new ActivityLog(dir));
             } catch (IOException e) {
                 throw new UncheckedIOException(e);

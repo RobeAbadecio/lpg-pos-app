@@ -195,6 +195,9 @@
     $('logout').hidden = !!me.demo;
     $('demo-note').hidden = !me.demo;
     $('store-label').textContent = me.business ? me.business.name : '';
+    Brand.apply(me.brand, me.business && me.business.name);
+    if (me.business) document.title = me.business.name + ' · LPG POS';
+    preloadLogo();
     $('team-link').hidden = me.role !== 'owner' || !!me.demo;
     $('billing-link').hidden = me.role !== 'owner' || !!me.demo;
     showBilling(me);
@@ -871,7 +874,57 @@
     }
   }
 
+  // Setup guide for a new store's owner: the first things to do, with a button for each. Hidden once done
+  // or when the owner hides it (Team page brings it back).
+  const GUIDE = {
+    look: ['Make it yours', 'Add your logo, pick a color and write a message for the bottom of receipts.', 'Open store details', () => { location.href = '/team.html#look'; }],
+    products: ['Add your LPG tanks', 'Each brand and size you sell, with its refill price.', 'Add tanks', () => go('products')],
+    suppliers: ['Add your suppliers', 'Who refills each brand, so stock and what you owe add up.', 'Add suppliers', () => go('inventory')],
+    start: ['Enter your starting stock', 'Tanks on hand, cash in the drawer, and what customers owe you today.', 'Enter starting balances', () => { state.dashMode = 'start'; go('dashboard'); }],
+    staff: ['Add your staff', 'Give each one their own sign-in, or share your store code so they can sign up.', 'Open Team', () => { location.href = '/team.html'; }],
+    pay: ['Pay the first month', 'Saving sales starts once the first payment is approved.', 'Open Billing', () => { location.href = '/billing.html'; }],
+    sale: ['Record your first sale', 'Pick a customer, tap the tanks, then take payment.', null, null],
+  };
+  let guideAt = 0;
+  async function renderGuide() {
+    const box = $('guide'), me = state.me;
+    if (!me || me.role !== 'owner' || me.demo || me.guideHidden) { box.hidden = true; return; }
+    if (Date.now() - guideAt < 5000) return;
+    guideAt = Date.now();
+    let g;
+    try { g = await api('GET', '/api/guide'); } catch (_) { return; }
+    const left = g.steps.filter((x) => !x.done).length;
+    me.guideHidden = g.hidden;
+    if (g.hidden || !left) { box.hidden = true; return; }
+    const done = g.steps.length - left;
+    const next = g.steps.find((x) => !x.done);
+    clear(box,
+      h('div', { class: 'card-head' },
+        h('div', {}, h('h2', { id: 'guide-title' }, 'Get your store ready'), h('div', { class: 'sub' }, `${done} of ${g.steps.length} done`)),
+        h('button', { type: 'button', class: 'btn small ghost', onclick: hideGuide }, 'Hide')),
+      h('div', { class: 'guide-bar', role: 'progressbar', 'aria-valuemin': 0, 'aria-valuemax': g.steps.length, 'aria-valuenow': done, 'aria-label': 'Setup progress' },
+        h('span', { style: `width:${Math.round(done * 100 / g.steps.length)}%` })),
+      h('ol', { class: 'guide-steps' }, g.steps.map((x) => {
+        const [title, help, label, act] = GUIDE[x.key] || [x.key, '', null, null];
+        return h('li', { class: x.done ? 'is-done' : x === next ? 'is-next' : '' },
+          h('span', { class: 'guide-dot', 'aria-hidden': 'true' }, x.done ? '✓' : ''),
+          h('div', { class: 'guide-text' }, h('b', {}, title), x.done ? h('span', { class: 'sr-only' }, ' (done)') : h('div', { class: 'sub' }, help)),
+          !x.done && label ? h('button', { type: 'button', class: 'btn small' + (x === next ? ' primary' : ''), onclick: act }, label) : null);
+      })));
+    box.hidden = false;
+  }
+
+  async function hideGuide() {
+    try {
+      await api('POST', '/api/guide', { hidden: '1' });
+      state.me.guideHidden = true;
+      $('guide').hidden = true;
+      toast('Setup guide hidden. Bring it back from Team & store details.');
+    } catch (e) { toast(e.message, true); }
+  }
+
   function renderSell(passive) {
+    renderGuide();
     const sale = state.sale;
     // Staff with dashboard access can date a sale on an earlier day, or move a receipt they're editing to another day.
     $('sale-date-field').hidden = !(state.me && state.me.dashboard);
@@ -902,7 +955,8 @@
   function receiptView(rc, onScreen) {
     const row = (label, value, cls) => h('div', { class: 'rc-row' + (cls ? ' ' + cls : '') }, h('span', {}, label), h('span', { class: 'num' }, value));
     return h('div', { class: 'receipt' },
-      h('div', { class: 'rc-head' }, h('strong', {}, 'LPG POS'), h('span', {}, `Receipt #${rc.id}`)),
+      storeHead(),
+      h('div', { class: 'rc-head' }, h('strong', {}, `Receipt #${rc.id}`)),
       h('div', { class: 'rc-meta' }, `${fmtTime(rc.time, { full: true })} · Served by ${rc.staff}`),
       h('div', { class: 'rc-meta' }, `Customer: ${rc.customer}`),
       h('div', { class: 'rc-lines' }, rc.lines.map((l) => h('div', { class: 'rc-line' },
@@ -923,11 +977,33 @@
           onScreen ? changeButtons('payment', p.id, `the ${peso.format(p.amount)} payment from ${rc.customer}`, p.staff, p.time,
             'with any other part of the same payment on other receipts') : null))) : null,
       rc.note ? h('p', { class: 'rc-note' }, rc.note) : null,
-      h('div', { class: 'rc-status' }, payPill(rc.status)));
+      h('div', { class: 'rc-status' }, payPill(rc.status)),
+      state.me && state.me.brand && state.me.brand.receiptNote ? h('p', { class: 'rc-thanks' }, state.me.brand.receiptNote) : null);
   }
 
-  function printReceipt(rc) {
+  // The store's name, logo, address and number at the top of a receipt; its own message at the bottom.
+  function storeHead() {
+    const me = state.me || {}, b = me.brand || {};
+    const contact = [b.address, b.phone].filter(Boolean).join(' · ');
+    return h('div', { class: 'rc-store' },
+      b.logo ? h('img', { class: 'rc-logo', src: b.logo, alt: '' }) : null,
+      h('strong', { class: 'rc-store-name' }, me.business ? me.business.name : 'LPG POS'),
+      contact ? h('div', { class: 'rc-meta' }, contact) : null);
+  }
+
+  // Loaded once, so a printed receipt never waits for (or misses) the logo.
+  let logoReady = Promise.resolve();
+  function preloadLogo() {
+    const src = state.me && state.me.brand && state.me.brand.logo;
+    if (!src) { logoReady = Promise.resolve(); return; }
+    const img = new Image();
+    img.src = src;
+    logoReady = img.decode ? img.decode().catch(() => {}) : Promise.resolve();
+  }
+
+  async function printReceipt(rc) {
     clear($('print-area'), receiptView(rc));
+    await logoReady;
     window.print();
   }
 

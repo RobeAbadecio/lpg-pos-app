@@ -23,7 +23,8 @@ final class Platform implements AutoCloseable {
     private static final SecureRandom RANDOM = new SecureRandom();
 
     record Business(long id, String code, String name, String contactName, String phone, String email, String address,
-                    String status, String created, String decided, String paidUntil, boolean billingExempt) {}
+                    String status, String created, String decided, String paidUntil, boolean billingExempt,
+                    String brandColor, String receiptNote, String logo, boolean guideHidden) {}
 
     record Account(String username, long businessId, String role, String status, String fullName, String created,
                    String pendingSalt, String pendingHash) {
@@ -124,6 +125,13 @@ final class Platform implements AutoCloseable {
             );
             CREATE UNIQUE INDEX bank_email_reference ON bank_emails(reference) WHERE status != 'untrusted';
             CREATE INDEX bank_emails_status ON bank_emails(status, id);
+            """,
+            // 5.3.0: each store's look (color, logo file in its tenant folder, receipt message) and the setup guide.
+            """
+            ALTER TABLE businesses ADD COLUMN brand_color TEXT NOT NULL DEFAULT '';
+            ALTER TABLE businesses ADD COLUMN receipt_note TEXT NOT NULL DEFAULT '';
+            ALTER TABLE businesses ADD COLUMN logo TEXT NOT NULL DEFAULT '';
+            ALTER TABLE businesses ADD COLUMN guide_hidden INTEGER NOT NULL DEFAULT 0;
             """,
     };
 
@@ -267,6 +275,28 @@ final class Platform implements AutoCloseable {
             audit(actor, id, "Updated business profile", name);
             return null;
         });
+    }
+
+    synchronized void updateBrand(long id, String color, String receiptNote, String actor) {
+        tx(() -> {
+            if (update("UPDATE businesses SET brand_color = ?, receipt_note = ? WHERE id = ?", color, receiptNote, id) == 0)
+                throw new Http.Error(404, "No such business");
+            audit(actor, id, "Updated the store's look", (color.isEmpty() ? "default color" : color) + (receiptNote.isEmpty() ? "" : ", receipt message"));
+            return null;
+        });
+    }
+
+    /** The logo's file name in the business's folder, or "" for none. */
+    synchronized void setLogo(long id, String file, String actor) {
+        tx(() -> {
+            if (update("UPDATE businesses SET logo = ? WHERE id = ?", file, id) == 0) throw new Http.Error(404, "No such business");
+            audit(actor, id, file.isEmpty() ? "Removed the store logo" : "Uploaded the store logo", "");
+            return null;
+        });
+    }
+
+    synchronized void setGuideHidden(long id, boolean hidden) {
+        update("UPDATE businesses SET guide_hidden = ? WHERE id = ?", hidden ? 1 : 0, id);
     }
 
     // ---------------------------------------------------------------- accounts
@@ -478,7 +508,8 @@ final class Platform implements AutoCloseable {
     private static Business business(ResultSet rs) throws SQLException {
         return new Business(rs.getLong("id"), rs.getString("code"), rs.getString("name"), rs.getString("contact_name"),
                 rs.getString("phone"), rs.getString("email"), rs.getString("address"), rs.getString("status"),
-                rs.getString("created"), rs.getString("decided"), rs.getString("paid_until"), rs.getInt("billing_exempt") == 1);
+                rs.getString("created"), rs.getString("decided"), rs.getString("paid_until"), rs.getInt("billing_exempt") == 1,
+                rs.getString("brand_color"), rs.getString("receipt_note"), rs.getString("logo"), rs.getInt("guide_hidden") == 1);
     }
 
     private static Account account(ResultSet rs) throws SQLException {

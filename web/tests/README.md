@@ -65,3 +65,14 @@ SalaryCheck uses fixed dates on a throw-away data folder: full, partial, early, 
 off, several unpaid pay days in a row, weekly / twice a month / monthly with month ends, refused duplicate payments,
 corrections and deletes, older salary records without a pay day, and reloading from the files.
 
+
+## Branding and setup guide check (5.3.0)
+
+```sh
+java -cp "/tmp/lpg-check:web/lib/*" BrandingCheck
+```
+
+It covers: the store's color and receipt message, the logo (checked by content, at most 200 KB, replaced and removed,
+kept in the store's own folder and never served from outside it), staff seeing but not changing the look, stores not
+seeing each other's logos, the setup guide's steps following the store's records, hiding it, the pay step when billing
+is on, and backups that include the logo.

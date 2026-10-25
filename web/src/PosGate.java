@@ -2,6 +2,7 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.BiConsumer;
 import java.util.regex.Pattern;
 
 /**
@@ -13,6 +14,9 @@ final class PosGate implements Http.Handler {
     static final Pattern USERNAME = Pattern.compile("[a-z0-9._-]{3,32}");
     private static final Pattern PHONE = Pattern.compile("[0-9 +()-]{7,20}");
     private static final Pattern EMAIL = Pattern.compile("[^@\\s]{1,64}@[^@\\s]{1,190}\\.[^@\\s]{2,}");
+    /** Accent colors a store can pick (the CSS for each is in shared/base.css); "" is the standard blue. */
+    static final List<String> BRAND_COLORS = List.of("", "green", "teal", "purple", "orange", "rose");
+    static final int MAX_LOGO = 200 * 1024;
 
     private final Platform platform;
     private final Billing billing;
@@ -82,7 +86,11 @@ final class PosGate implements Http.Handler {
                 return;
             }
             case "business" -> {
-                business(r, s, a);
+                business(r, s, a, seg);
+                return;
+            }
+            case "guide" -> {
+                guide(r, s, a, seg);
                 return;
             }
             case "billing" -> {
@@ -184,6 +192,7 @@ final class PosGate implements Http.Handler {
         Billing.State bs = billing.state(b);
         return Json.obj("username", s.username, "demo", autoUser != null, "dashboard", u != null && u.dashboard(),
                 "role", a.role(), "business", Json.obj("name", b.name(), "code", a.owner() ? b.code() : null),
+                "brand", brandOut(b),
                 "billing", Json.obj("state", bs.state(), "paidUntil", bs.paidUntil(), "lockDate", bs.lockDate()));
     }
 
@@ -294,23 +303,108 @@ final class PosGate implements Http.Handler {
         return out;
     }
 
-    private void business(Http.Req r, Auth.Session s, Platform.Account me) throws IOException {
+    /** What every page and the printed receipt need for the store's look. */
+    static Map<String, Object> brandOut(Platform.Business b) {
+        return Json.obj("color", b.brandColor(), "logo", b.logo().isEmpty() ? null : "/api/business/logo?v=" + Math.abs(b.logo().hashCode()),
+                "receiptNote", b.receiptNote(), "address", b.address(), "phone", b.phone());
+    }
+
+    private void business(Http.Req r, Auth.Session s, Platform.Account me, String[] seg) throws IOException {
         Platform.Business b = platform.business(s.businessId);
-        if (r.method.equals("GET")) {
+        String route = r.method + " " + String.join("/", Arrays.copyOfRange(seg, 1, seg.length));
+        if (route.equals("GET ")) {
             r.json(200, Json.obj("name", b.name(), "contactName", b.contactName(), "phone", b.phone(), "email", b.email(),
-                    "address", b.address(), "code", me.owner() ? b.code() : null));
+                    "address", b.address(), "code", me.owner() ? b.code() : null, "brand", brandOut(b), "colors", BRAND_COLORS));
             return;
         }
-        if (!r.method.equals("PUT")) throw new Http.Error(404, "Unknown endpoint");
+        if (route.equals("GET logo")) {
+            Path logo = logoFile(b);
+            if (logo == null) throw new Http.Error(404, "No logo yet");
+            r.image(logo.toString().endsWith(".png") ? "image/png" : "image/jpeg", java.nio.file.Files.readAllBytes(logo));
+            return;
+        }
         if (!me.owner()) throw new Http.Error(403, "Only the store owner can change the store's details");
-        String phone = text(r, "phone", "Mobile number", 0, 20, true);
-        if (!PHONE.matcher(phone).matches()) throw new Http.Error(400, "Enter a valid mobile number");
-        String email = text(r, "email", "Email", 0, 254, false);
-        if (!email.isEmpty() && !EMAIL.matcher(email).matches()) throw new Http.Error(400, "Enter a valid email address");
-        platform.updateProfile(s.businessId, text(r, "name", "Store name", 2, 80, true), text(r, "contactName", "Contact name", 0, 80, false),
-                phone, email, text(r, "address", "Address", 0, 200, false), s.username);
-        tenants.get(s.businessId).log().add(s.username, r.clientIp(), "Updated the store's details");
-        r.json(200, Json.obj("ok", true));
+        ActivityLog log = tenants.get(s.businessId).log();
+        switch (route) {
+            case "PUT " -> {
+                String phone = text(r, "phone", "Mobile number", 0, 20, true);
+                if (!PHONE.matcher(phone).matches()) throw new Http.Error(400, "Enter a valid mobile number");
+                String email = text(r, "email", "Email", 0, 254, false);
+                if (!email.isEmpty() && !EMAIL.matcher(email).matches()) throw new Http.Error(400, "Enter a valid email address");
+                platform.updateProfile(s.businessId, text(r, "name", "Store name", 2, 80, true), text(r, "contactName", "Contact name", 0, 80, false),
+                        phone, email, text(r, "address", "Address", 0, 200, false), s.username);
+                log.add(s.username, r.clientIp(), "Updated the store's details");
+            }
+            case "PUT brand" -> {
+                String color = r.param("color");
+                if (!BRAND_COLORS.contains(color)) throw new Http.Error(400, "Pick one of the colors");
+                platform.updateBrand(s.businessId, color, text(r, "receiptNote", "Receipt message", 0, 120, false), s.username);
+                log.add(s.username, r.clientIp(), "Changed the store's color and receipt message");
+            }
+            case "POST logo" -> {
+                if (!auth.allow("logo:" + s.businessId, 20)) throw new Http.Error(429, "Too many uploads. Try again in an hour.");
+                r.allowLargeBody();
+                Billing.Image img = Billing.image(r.form().getOrDefault("image", ""));
+                if (img.bytes().length > MAX_LOGO) throw new Http.Error(413, "Logo is too big (at most 200 KB)");
+                Path dir = tenants.dir(s.businessId);
+                java.nio.file.Files.createDirectories(dir);
+                // A new name each time, so phones showing the old logo fetch the new one.
+                String name = "logo-" + Long.toString(System.currentTimeMillis(), 36) + "." + img.ext();
+                Path tmp = dir.resolve(".logo.tmp");
+                java.nio.file.Files.write(tmp, img.bytes());
+                java.nio.file.Files.move(tmp, dir.resolve(name), java.nio.file.StandardCopyOption.REPLACE_EXISTING, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
+                Path old = logoFile(b);
+                platform.setLogo(s.businessId, name, s.username);
+                if (old != null) java.nio.file.Files.deleteIfExists(old);
+                log.add(s.username, r.clientIp(), "Uploaded the store logo");
+            }
+            case "DELETE logo" -> {
+                Path old = logoFile(b);
+                platform.setLogo(s.businessId, "", s.username);
+                if (old != null) java.nio.file.Files.deleteIfExists(old);
+                log.add(s.username, r.clientIp(), "Removed the store logo");
+            }
+            default -> throw new Http.Error(404, "Unknown endpoint");
+        }
+        r.json(200, Json.obj("ok", true, "brand", brandOut(platform.business(s.businessId))));
+    }
+
+    /** The logo file, or null when there is none (or the name stored isn't one this server wrote). */
+    private Path logoFile(Platform.Business b) {
+        if (!b.logo().matches("logo-[a-z0-9]+\\.(png|jpg)")) return null;
+        Path p = tenants.dir(b.id()).resolve(b.logo());
+        return java.nio.file.Files.isRegularFile(p) ? p : null;
+    }
+
+    /**
+     * The owner's setup guide on the New sale page: which first steps are done, worked out from the store's own records.
+     * The owner can hide it; it also stops showing once every step is done.
+     */
+    private void guide(Http.Req r, Auth.Session s, Platform.Account me, String[] seg) throws IOException {
+        if (!me.owner()) throw new Http.Error(403, "Only the store owner sees the setup guide");
+        if (seg.length == 1 && r.method.equals("POST")) {
+            platform.setGuideHidden(s.businessId, "1".equals(r.param("hidden")));
+            r.json(200, Json.obj("ok", true));
+            return;
+        }
+        if (seg.length != 1 || !r.method.equals("GET")) throw new Http.Error(404, "Unknown endpoint");
+        r.json(200, guideOut(platform.business(s.businessId)));
+    }
+
+    Map<String, Object> guideOut(Platform.Business b) {
+        DataStore store = tenants.get(b.id()).store();
+        String bill = billing.state(b).state();
+        boolean staff = platform.accounts(b.id()).stream().anyMatch(x -> !x.owner() && x.active());
+        List<Object> steps = new ArrayList<>();
+        BiConsumer<String, Boolean> step = (key, done) -> steps.add(Json.obj("key", key, "done", done));
+        step.accept("look", !b.logo().isEmpty() || !b.brandColor().isEmpty() || !b.receiptNote().isEmpty());
+        step.accept("products", !store.products().isEmpty());
+        step.accept("suppliers", !store.suppliers().isEmpty());
+        step.accept("start", store.opening() != null || !store.movements().isEmpty());
+        step.accept("staff", staff);
+        if (!bill.equals("free")) step.accept("pay", !bill.equals("unpaid"));
+        step.accept("sale", !store.receipts().isEmpty());
+        return Json.obj("hidden", b.guideHidden(), "steps", steps);
     }
 
     /** Billing page (store owner): what is owed, how to pay, and sending a payment's reference number. */
