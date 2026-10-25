@@ -22,6 +22,7 @@ final class AdminApi implements Http.Handler {
 
     private final Platform platform;
     private final Billing billing;
+    private final MailWatch mail;
     private final Tenants tenants;
     private final PosGate gate;
     private final Auth auth;
@@ -33,9 +34,10 @@ final class AdminApi implements Http.Handler {
     private final String COOKIE;
     private final long startedAt = System.currentTimeMillis();
 
-    AdminApi(Platform platform, Billing billing, Tenants tenants, PosGate gate, Auth auth, Tunnel tunnel, Path appRoot, Path sharedRoot, int posPort, int adminPort) {
+    AdminApi(Platform platform, Billing billing, MailWatch mail, Tenants tenants, PosGate gate, Auth auth, Tunnel tunnel, Path appRoot, Path sharedRoot, int posPort, int adminPort) {
         this.platform = platform;
         this.billing = billing;
+        this.mail = mail;
         this.tenants = tenants;
         this.gate = gate;
         this.auth = auth;
@@ -67,7 +69,7 @@ final class AdminApi implements Http.Handler {
         if (admin == null) throw new Http.Error(401, "Please sign in");
 
         String[] seg = r.path.substring("/api/".length()).split("/");
-        if (List.of("platform", "businesses", "accounts", "billing", "payments").contains(seg[0])) {
+        if (List.of("platform", "businesses", "accounts", "billing", "payments", "mail", "bank-emails").contains(seg[0])) {
             platformRoute(r, admin, seg);
             return;
         }
@@ -353,6 +355,27 @@ final class AdminApi implements Http.Handler {
                 billing.reject(paymentId(id), PosGate.text(r, "note", "Reason", 0, 200, false), ADMIN);
                 r.json(200, Json.obj("ok", true));
             }
+            case "PUT mail" -> {
+                mail.saveSettings(r.param("on").equals("1"), r.param("auto").equals("1"), PosGate.text(r, "user", "Mailbox", 0, 254, false),
+                        r.param("password"), ADMIN);
+                r.json(200, Json.obj("ok", true));
+            }
+            case "POST mail/:id" -> {
+                if (!id.equals("check")) throw new Http.Error(404, "Unknown endpoint");
+                try {
+                    r.json(200, Json.obj("ok", true, "added", mail.poll()));
+                } catch (IOException e) {
+                    throw new Http.Error(502, "Could not read the mailbox: " + e.getMessage());
+                }
+            }
+            case "POST bank-emails/:id/apply" -> {
+                mail.apply(emailId(id), ADMIN);
+                r.json(200, Json.obj("ok", true));
+            }
+            case "POST bank-emails/:id/ignore" -> {
+                mail.ignore(emailId(id), ADMIN);
+                r.json(200, Json.obj("ok", true));
+            }
             case "POST businesses/:id/select" -> {
                 long b = businessId(id);
                 selected.put(admin.token, b);
@@ -411,6 +434,14 @@ final class AdminApi implements Http.Handler {
         }
     }
 
+    private static long emailId(String raw) {
+        try {
+            return Long.parseLong(raw);
+        } catch (NumberFormatException e) {
+            throw new Http.Error(404, "No such email");
+        }
+    }
+
     private static int intParam(Http.Req r, String name, String label) throws IOException {
         try {
             return Integer.parseInt(r.param(name));
@@ -429,10 +460,26 @@ final class AdminApi implements Http.Handler {
             Billing.Invoice inv = billing.invoice(p.invoiceId());
             out.put("business", names.get(p.businessId()));
             out.put("invoice", inv == null ? null : Billing.invoiceOut(inv));
-            out.put("warnings", p.status().equals("pending") ? billing.warnings(p) : List.of());
+            MailWatch.Email e = mail.forReference(p.reference());
+            boolean linked = e != null && Objects.equals(e.paymentId(), p.id());
+            out.put("bank", linked ? MailWatch.emailOut(e) : null);
+            List<String> warnings = new ArrayList<>(p.status().equals("pending") ? billing.warnings(p) : List.of());
+            if (p.status().equals("pending") && mail.on()) {
+                if (!linked) warnings.add("No MariBank email with this reference yet");
+                else if (inv != null && e.amount() != inv.amount()) warnings.add("The MariBank email shows " + Billing.peso(e.amount()));
+            }
+            out.put("warnings", warnings);
             queue.add(out);
         }
-        return Json.obj("settings", billing.settings(), "payments", queue);
+        List<Object> emails = new ArrayList<>();
+        for (MailWatch.Email e : mail.recent()) {
+            Map<String, Object> out = MailWatch.emailOut(e);
+            Billing.Invoice inv = e.invoiceId() == null ? null : billing.invoice(e.invoiceId());
+            out.put("invoice", inv == null ? null : Billing.invoiceOut(inv));
+            out.put("business", inv == null ? null : names.get(inv.businessId()));
+            emails.add(out);
+        }
+        return Json.obj("settings", billing.settings(), "payments", queue, "mail", mail.settings(), "emails", emails);
     }
 
     private Map<String, Object> platformOverview(Auth.Session admin) {

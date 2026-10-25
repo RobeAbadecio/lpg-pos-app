@@ -38,3 +38,17 @@ java -cp "/tmp/lpg-check:web/lib/*" BillingCheck
 It covers: billing off and on, free days, invoices with their own amounts, sending a payment (reference, amount, date,
 picture checked by content), one use per reference across businesses, approving exactly once under many clicks,
 rejecting, grace and lock (records still readable), free stores, paid-until for cash, the QR code, and backups with pictures.
+
+## MariBank email check
+
+Same setup. Runs a fake mailbox (IMAP) with made-up MariBank emails:
+
+```sh
+java -cp "/tmp/lpg-check:web/lib/*" MailCheck
+```
+
+It covers: reading the email (quoted-printable and base64), trusting only emails Gmail says MariBank signed (fake
+senders, failed or look-alike signatures, a faked header below Gmail's), read-only mailbox commands, saving each
+transfer once, matching by reference and exact amount, suggest-only and auto-approve, amount-only suggestions and
+the admin's one-click approve, wrong amounts, rejected payments, "not a fee", and the app password kept out of the
+database, the page and the backups.

@@ -25,7 +25,8 @@ public class AdminDatabaseApiCheck {
         Platform platform=new Platform(dir.resolve("platform.db"));Tenants tenants=new Tenants(dir,platform);
         DataStore store=tenants.get(platform.createActive("Check store","check")).store();
         Auth auth=new Auth();
-        AdminApi api=new AdminApi(platform,new Billing(platform),tenants,new PosGate(platform,new Billing(platform),tenants,auth,dir,dir,8080,null),auth,new Tunnel(8080,u->{}),dir,dir,8080,8090);
+        Billing billing=new Billing(platform);
+        AdminApi api=new AdminApi(platform,billing,new MailWatch(platform,billing),tenants,new PosGate(platform,new Billing(platform),tenants,auth,dir,dir,8080,null),auth,new Tunnel(8080,u->{}),dir,dir,8080,8090);
         Exchange setup=new Exchange("POST","/api/admin/setup");setup.req.set("X-LPG","1");setup.body="password=check-admin-pass";
         api.handle(new Http.Req(setup));String cookie=setup.res.getFirst("Set-Cookie").split(";")[0];
         Exchange anon=new Exchange("GET","/api/database/Customers");

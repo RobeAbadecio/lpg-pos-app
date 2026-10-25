@@ -37,11 +37,30 @@
 
       <section class="card acct-card" style="margin-top:16px">
         <div class="acct-top"><h2>Payments to check</h2><span class="muted" id="queue-count"></span></div>
-        <p class="acct-hint">Open your MariBank app and find a payment with the same amount and reference before approving. Approving adds one month.</p>
+        <p class="acct-hint">A green “MariBank email” line means the bank’s own email shows this reference. Without it, check your MariBank app for the same amount and reference before approving. Approving adds one month.</p>
         <div class="table-wrap"><table class="acct-table stack">
           <thead><tr><th>Sent</th><th>Business</th><th>Invoice</th><th>Paid</th><th>Reference</th><th>Status</th><th></th></tr></thead>
           <tbody id="payment-rows"></tbody>
         </table></div>
+      </section>
+
+      <section class="card acct-card" style="margin-top:16px">
+        <div class="acct-top"><h2>MariBank emails</h2><span class="spacer"></span><span id="mail-state"></span><button class="btn" type="button" id="mail-check">Check now</button></div>
+        <p class="acct-hint">The server reads the “money received” emails from MariBank in a Gmail box (read-only, every 2 minutes) and matches them to payments by reference and exact amount. Only emails that Gmail confirms really came from MariBank are used.</p>
+        <p class="acct-hint" id="mail-status"></p>
+        <div class="table-wrap"><table class="acct-table stack">
+          <thead><tr><th>Paid at</th><th>Amount</th><th>Reference</th><th>From</th><th>Match</th><th></th></tr></thead>
+          <tbody id="email-rows"></tbody>
+        </table></div>
+        <form id="mail-form" class="acct-form">
+          <label class="check"><input type="checkbox" name="on"> Read MariBank emails</label>
+          <div class="row">
+            <label class="field"><span>Gmail address</span><input class="input" name="user" type="email" maxlength="254" autocomplete="off" placeholder="e.g. lpgpos.payments@gmail.com"></label>
+            <label class="field"><span>Gmail app password</span><input class="input" name="password" type="password" autocomplete="new-password" placeholder="16 letters from Google"><small class="muted" id="mail-pw-hint">Kept only on this computer, never shown again.</small></label>
+          </div>
+          <label class="check"><input type="checkbox" name="auto"> Approve automatically when the email’s reference and exact amount match a waiting payment</label>
+          <div><button class="btn primary" type="submit">Save email settings</button></div>
+        </form>
       </section>
 
       <section class="card acct-card" style="margin-top:16px">

@@ -4,6 +4,23 @@ Every update gets a new version number. It's shown in the POS (header, account m
 
 Numbering is `major.minor.patch`: **major** when the data or the way staff work changes a lot, **minor** for new features, **patch** for fixes and small changes.
 
+## 5.2.0 — 2026-10-25: MariBank emails check payments, phase 3
+
+**Reading MariBank's emails** (platform admin → **MariBank emails**)
+- The server reads MariBank's "money received" emails (MariBank Transfer Notification, from alerts@maribank.com.ph) in a Gmail box, every 2 minutes. It signs in with a Gmail **app password** and opens the inbox **read-only**: nothing is marked read, moved or deleted.
+- An email is only used when Gmail says MariBank really sent it (MariBank's DKIM signature and DMARC passed). A fake email that only looks like MariBank's is listed as "Not trusted" and does nothing.
+- Each email gives the time, amount, the payer's bank and the Reference No (the same number the payer's app shows). The same transfer is saved once.
+- The app password is kept in a private file next to the data (`mail-password`, owner-only), never in the database, the backups or the page.
+
+**Matching**
+- When a store owner sends a reference that a MariBank email also shows, the payment gets a green "MariBank email" line in **Payments to check**. Without one, the queue says "No MariBank email with this reference yet". A different amount is pointed out.
+- **Auto-approve** (off by default): approves a payment by itself when the email's reference matches and its amount is exactly what the invoice asks (every open invoice has its own centavos), paid on or after the invoice date. The audit log shows "bank email" as who approved it.
+- An email nobody sent a reference for, whose amount is exactly one open invoice's, is suggested for that store: **Approve for <store>** pays it in one click. This is never automatic.
+- An email that isn't a store fee can be marked **Not a fee**. Rejecting a payment frees its email again.
+
+**Other**
+- New test: `MailCheck` (75 checks, with a fake mailbox). Saved emails can be checked by hand with `java -cp build:lib/* BankMail file.eml`.
+
 ## 5.1.0 — 2026-10-25: monthly billing, phase 2
 
 **Monthly fee per business** (platform admin → Billing settings)
