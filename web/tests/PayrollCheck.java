@@ -74,7 +74,7 @@ public class PayrollCheck {
         store.addExpense("advance", 500, "jun", "online", "ana", "", 0);
         Map<String, Object> p = store.payroll(today);
         Map<String, Object> pj = person(p, "Jun");
-        check(same(num(pj, "advanced"), 1500) && same(num(pj, "balance"), 1500), "advances lower the balance (salary 3000 − 1500)");
+        check(same(num(pj, "advanced"), 1500) && same(num(pj, "balance"), num(pj, "owed")), "advances are kept apart from the salary owed");
         check(same(num(p, "totalSalary"), 11000) && same(num(p, "totalAdvanced"), 2050), "payroll totals (Old's and Lea's starting advances counted)");
         check(person(p, "Old").get("id") == null && same(num(person(p, "Old"), "advanced"), 300), "names on older records show, to be set up");
 
@@ -84,7 +84,7 @@ public class PayrollCheck {
         check(same(store.advancesOwed().get("Jun"), 1100), "paying back lowers the advance");
         store.addExpense("salary", 1900, "Jun", "cash", "ana", "Week 43", 1100);
         Map<String, Object> after = person(store.payroll(today), "Jun");
-        check(same(num(after, "advanced"), 0) && same(num(after, "balance"), 3000), "advances cleared on pay day; the full salary is due next time");
+        check(same(num(after, "advanced"), 0) && same(num(after, "owed"), 0), "advances cleared on pay day; nothing left owed");
         check(list(after.get("history")).size() == 4 && after.get("lastPaid") != null, "history newest first, last paid");
         String repaidId = store.expenses().stream().filter(e -> e.category().equals("repaid")).findFirst().orElseThrow().id();
         expectConflict(() -> store.updateExpense(repaidId, "repaid", 5000, "Jun", "cash", "", 0, null), "editing a pay-back can't overdraw the advances");

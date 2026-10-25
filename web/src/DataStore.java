@@ -35,10 +35,11 @@ import java.util.function.Predicate;
  * StaffPaybacks.csv   id,dateTime,staff,amount,recordedBy,note   the store paying staff back for money they put in
  * TankReturns.csv     id,dateTime,customerId,lpgId,qty,staff,remark[,emptyKind,emptyBrand]   empties brought back by
  *                     customers who owed them; with emptyKind, a generic / other-brand empty of lpgId's size
- * Expenses.csv        id,dateTime,category,amount,employee,method,recordedBy,note,advanceDeducted   money the store
+ * Expenses.csv        id,dateTime,category,amount,employee,method,recordedBy,note,advanceDeducted[,payday]   money the store
  *                     spent besides suppliers: category gasoline (delivery), salary, advance (salary paid ahead,
  *                     taken off a later salary as advanceDeducted), repaid (an advance the employee paid back in cash:
- *                     money in) or other; method "cash" (default), "online" or "check"
+ *                     money in) or other; method "cash" (default), "online" or "check"; payday (salary, 5.2.1): the
+ *                     scheduled pay day (YYYY-MM-DD) it pays for; older salaries without it count for the nearest pay day
  * Employees.csv       id,name,salary,schedule,day1,day2,created,note   staff on the payroll (matched to Expenses by name):
  *                     schedule weekly (day1 1-7 = Mon-Sun), twice (day1, day2 = days of the month) or monthly (day1)
  * WebUsers.csv        username,salt,hash,created[,dashboard]             dashboard "1": may see the summary dashboard
@@ -175,7 +176,7 @@ final class DataStore {
      * method: "cash", "online" or "check"; only cash comes out of the drawer.
      */
     record Expense(String id, String rawTime, LocalDateTime time, String category, double amount, String employee,
-                   String method, String recordedBy, String note, double advanceDeducted) {
+                   String method, String recordedBy, String note, double advanceDeducted, String payday) {
         boolean cash() { return "cash".equals(method); }
 
         /** Money out of the store: an advance paid back ("repaid") is money in. */
@@ -1295,7 +1296,7 @@ final class DataStore {
             List<Expense> out = new ArrayList<>();
             for (String[] r : expenses.rows()) {
                 out.add(new Expense(col(r, 0), col(r, 1), parseTime(col(r, 1)), col(r, 2), num(col(r, 3), 0), col(r, 4),
-                        expenseMethod(col(r, 5)), col(r, 6), col(r, 7), num(col(r, 8), 0)));
+                        expenseMethod(col(r, 5)), col(r, 6), col(r, 7), num(col(r, 8), 0), col(r, 9)));
             }
             out.sort(Comparator.comparing((Expense e) -> e.time() == null ? LocalDateTime.MIN : e.time()).thenComparingInt(e -> numericId(e.id())));
             return out;
@@ -1315,8 +1316,16 @@ final class DataStore {
         }
     }
 
-    /** Records an expense. A salary can take off (part of) the employee's unpaid advances. */
     Expense addExpense(String category, double amount, String employee, String method, String recordedBy, String note, double advanceDeducted) {
+        return addExpense(category, amount, employee, method, recordedBy, note, advanceDeducted, null);
+    }
+
+    /**
+     * Records an expense. A salary can take off (part of) the employee's unpaid advances; payday (salary only,
+     * may be null: the nearest pay day) is the pay day it pays for, and it can't pay more than is left for it.
+     */
+    Expense addExpense(String category, double amount, String employee, String method, String recordedBy, String note, double advanceDeducted,
+                       LocalDate payday) {
         synchronized (lock) {
             if (!EXPENSE_CATEGORIES.contains(category)) throw new Conflict("Choose what the expense was for.");
             boolean forEmployee = PAYROLL.contains(category);
@@ -1336,13 +1345,14 @@ final class DataStore {
                 }
             }
             if (amount <= 0 && advanceDeducted <= 0) throw new Conflict("Enter the amount.");
+            String time = now();
+            String pay = category.equals("salary") ? salaryPayday(who, amount + advanceDeducted, payday, parseTime(time), null) : "";
             List<String[]> rows = expenses.copy();
             String id = nextId(rows);
-            String time = now();
             rows.add(new String[]{id, time, category, money(amount), who, expenseMethod(method),
-                    recordedBy, note == null ? "" : note, advanceDeducted > 0 ? money(advanceDeducted) : ""});
+                    recordedBy, note == null ? "" : note, advanceDeducted > 0 ? money(advanceDeducted) : "", pay});
             expenses.save(rows);
-            return new Expense(id, time, parseTime(time), category, amount, who, expenseMethod(method), recordedBy, note, advanceDeducted);
+            return new Expense(id, time, parseTime(time), category, amount, who, expenseMethod(method), recordedBy, note, advanceDeducted, pay);
         }
     }
 
@@ -1363,8 +1373,11 @@ final class DataStore {
             if (!category.equals("salary")) advanceDeducted = 0;
             if (amount <= 0 && advanceDeducted <= 0) throw new Conflict("Enter the amount.");
             String time = day == null || old.time() == null ? old.rawTime() : day.atTime(old.time().toLocalTime()).format(TIME);
+            // A salary keeps the pay day it was for (an older one without it gets the nearest one now).
+            LocalDate keep = old.category().equals("salary") && !old.payday().isEmpty() ? parseDay(old.payday()) : null;
+            String pay = category.equals("salary") ? salaryPayday(who, amount + advanceDeducted, keep, parseTime(time), id) : "";
             String[] row = {id, time, category, money(amount), who, expenseMethod(method), old.recordedBy(), note == null ? "" : note,
-                    advanceDeducted > 0 ? money(advanceDeducted) : ""};
+                    advanceDeducted > 0 ? money(advanceDeducted) : "", pay};
             // Every employee's advances must still cover what was taken off their salaries.
             Map<String, Double> left = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
             Opening o = opening();
@@ -1478,35 +1491,141 @@ final class DataStore {
         return from;
     }
 
+    /** The last pay day on or before day. */
+    static LocalDate lastPayday(Employee e, LocalDate day) {
+        LocalDate pay = nextPayday(e, day.minusDays(e.schedule().equals("weekly") ? 6 : 31));
+        for (LocalDate n = nextPayday(e, pay.plusDays(1)); !n.isAfter(day); n = nextPayday(e, n.plusDays(1))) pay = n;
+        return pay;
+    }
+
+    /** The pay day a salary paid on day counts for when none was chosen: the nearest one (a tie goes to the earlier). */
+    static LocalDate nearestPayday(Employee e, LocalDate day) {
+        LocalDate before = lastPayday(e, day), after = nextPayday(e, day);
+        return java.time.temporal.ChronoUnit.DAYS.between(before, day) <= java.time.temporal.ChronoUnit.DAYS.between(day, after) ? before : after;
+    }
+
+    private static LocalDate parseDay(String s) {
+        try {
+            return s == null || s.isBlank() ? null : LocalDate.parse(s.trim());
+        } catch (java.time.format.DateTimeParseException x) {
+            return null;
+        }
+    }
+
+    private Employee employee(String name) {
+        return employees().stream().filter(e -> e.name().equalsIgnoreCase(name)).findFirst().orElse(null);
+    }
+
+    /** The pay day a salary record counts for: the one saved with it, or the nearest one to when it was paid. */
+    private static LocalDate payday(Employee e, Expense x) {
+        LocalDate saved = parseDay(x.payday());
+        return saved != null ? saved : x.time() == null ? null : nearestPayday(e, x.time().toLocalDate());
+    }
+
+    /** Salary paid (handed over + advances taken off) per pay day, leaving out the record skip. */
+    private Map<LocalDate, Double> paidPerPayday(Employee e, String skip) {
+        Map<LocalDate, Double> paid = new TreeMap<>();
+        for (Expense x : expenses()) {
+            if (!x.category().equals("salary") || !x.employee().equalsIgnoreCase(e.name()) || x.id().equals(skip)) continue;
+            LocalDate d = payday(e, x);
+            if (d != null) paid.merge(d, x.amount() + x.advanceDeducted(), Double::sum);
+        }
+        return paid;
+    }
+
+    /**
+     * The pay day (YYYY-MM-DD) a salary of gross (handed over + advance taken off) for who is saved with, or ""
+     * for a name not on the payroll. Refuses a day that isn't one of their pay days and paying a pay day twice.
+     * skip: the record being corrected, which may keep up to what it already paid for that day.
+     */
+    private String salaryPayday(String who, double gross, LocalDate chosen, LocalDateTime paidAt, String skip) {
+        Employee e = employee(who);
+        if (e == null) return chosen == null ? "" : chosen.toString();
+        LocalDate day = chosen != null ? chosen : nearestPayday(e, paidAt == null ? LocalDate.now() : paidAt.toLocalDate());
+        if (chosen != null && !nextPayday(e, chosen).equals(chosen)) throw new Conflict(chosen + " isn't one of " + e.name() + "'s pay days.");
+        double left = round(e.salary() - paidPerPayday(e, skip).getOrDefault(day, 0.0));
+        if (skip != null) {
+            Expense was = expenses().stream().filter(x -> x.id().equals(skip)).findFirst().orElse(null);
+            if (was != null && was.category().equals("salary") && day.equals(payday(e, was)) && gross <= was.amount() + was.advanceDeducted() + 0.005) return day.toString();
+        }
+        String when = day.format(java.time.format.DateTimeFormatter.ofPattern("MMM d, yyyy", Locale.ENGLISH));
+        if (left <= 0.005) throw new Conflict(e.name() + "'s salary for " + when + " is already paid in full.");
+        if (gross > left + 0.005) throw new Conflict("Only ₱" + money(left) + " of " + e.name() + "'s salary for " + when + " is left to pay.");
+        return day.toString();
+    }
+
+    /**
+     * How a pay day stands: paid, partial, unpaid (it's today), overdue (it has passed) or unknown (before they
+     * were put on the payroll, so nothing says whether it was paid), with what was paid for it and what's left.
+     */
+    private static Map<String, Object> period(Employee e, LocalDate day, double paid, LocalDate start, LocalDate today, List<Object> records) {
+        double left = Math.max(0, round(e.salary() - paid));
+        String status = left <= 0.005 ? "paid" : paid > 0.005 ? "partial" : start == null || day.isBefore(start) ? "unknown"
+                : day.isAfter(today) ? "upcoming" : day.equals(today) ? "unpaid" : "overdue";
+        return Json.obj("payday", day.toString(), "status", status, "paid", round(paid), "left", status.equals("unknown") ? null : round(left), "records", records);
+    }
+
     /**
      * Everyone on the payroll (plus names that only appear on salary or advance records, so older entries
-     * show up to be set up): salary, schedule, next pay day, unpaid advances, what's left to hand over on
-     * pay day (salary − advances), and their salary / advance / paid-back records, newest first.
+     * show up to be set up): salary, schedule, last and next pay day, how the last pay day stands, salary still
+     * owed for pay days that have come since they were put on the payroll, unpaid advances (kept apart), the
+     * recent pay days with the salaries that paid them, and their salary / advance / paid-back records, newest first.
      */
     Map<String, Object> payroll(LocalDate today) {
         synchronized (lock) {
             Map<String, Double> owed = advancesOwed();
             Map<String, List<Object>> history = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
             Map<String, String> lastPaid = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+            Map<String, Employee> staff = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
+            for (Employee e : employees()) staff.put(e.name(), e);
+            // Per employee: salary records per pay day (newest first).
+            Map<String, Map<LocalDate, List<Object>>> byDay = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
             List<Expense> all = expenses();
             for (int i = all.size() - 1; i >= 0; i--) {
                 Expense e = all.get(i);
                 if (!e.payroll() || e.employee().isBlank()) continue;
-                history.computeIfAbsent(e.employee(), k -> new ArrayList<>()).add(Json.obj("id", e.id(), "time", e.rawTime(), "category", e.category(),
-                        "amount", round(e.amount()), "advanceDeducted", round(e.advanceDeducted()), "method", e.method(), "recordedBy", e.recordedBy(), "note", e.note()));
+                Employee who = staff.get(e.employee());
+                LocalDate day = who != null && e.category().equals("salary") ? payday(who, e) : null;
+                Map<String, Object> rec = Json.obj("id", e.id(), "time", e.rawTime(), "category", e.category(),
+                        "amount", round(e.amount()), "advanceDeducted", round(e.advanceDeducted()), "method", e.method(), "recordedBy", e.recordedBy(), "note", e.note(),
+                        "payday", day == null ? null : day.toString(), "paydayGuessed", day != null && e.payday().isEmpty());
+                history.computeIfAbsent(e.employee(), k -> new ArrayList<>()).add(rec);
+                if (day != null) byDay.computeIfAbsent(e.employee(), k -> new TreeMap<>()).computeIfAbsent(day, k -> new ArrayList<>()).add(rec);
                 if (e.category().equals("salary")) lastPaid.putIfAbsent(e.employee(), e.rawTime());
             }
             Set<String> names = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
             List<Object> rows = new ArrayList<>();
-            double totalSalary = 0, totalAdvanced = 0;
-            for (Employee e : employees()) {
+            double totalSalary = 0, totalAdvanced = 0, totalOwed = 0;
+            for (Employee e : staff.values()) {
                 names.add(e.name());
                 double adv = owed.getOrDefault(e.name(), 0.0);
                 totalSalary += e.salary();
                 totalAdvanced += adv;
+                Map<LocalDate, List<Object>> recs = byDay.getOrDefault(e.name(), Map.of());
+                Map<LocalDate, Double> paid = paidPerPayday(e, null);
+                LocalDate start = e.created().length() >= 10 ? parseDay(e.created().substring(0, 10)) : null;
+                LocalDate last = lastPayday(e, today), next = nextPayday(e, today.plusDays(1));
+                // Salary still owed: every pay day from the day they were put on the payroll up to today.
+                double due = 0;
+                if (start != null) {
+                    for (LocalDate d = nextPayday(e, start); !d.isAfter(today); d = nextPayday(e, d.plusDays(1))) {
+                        due += Math.max(0, e.salary() - paid.getOrDefault(d, 0.0));
+                    }
+                }
+                due = round(due);
+                totalOwed += due;
+                // The last 6 pay days since they were put on the payroll and any pay day with a salary on it, newest first.
+                TreeSet<LocalDate> days = new TreeSet<>(Comparator.reverseOrder());
+                days.addAll(recs.keySet());
+                LocalDate back = last;
+                for (int k = 0; k < 6 && start != null && !back.isBefore(start); k++, back = lastPayday(e, back.minusDays(1))) days.add(back);
+                List<Object> periods = new ArrayList<>();
+                for (LocalDate d : days) periods.add(period(e, d, paid.getOrDefault(d, 0.0), start, today, recs.getOrDefault(d, List.of())));
                 rows.add(Json.obj("id", e.id(), "name", e.name(), "salary", round(e.salary()), "schedule", e.schedule(), "day1", e.day1(), "day2", e.day2(),
-                        "nextPayday", nextPayday(e, today).toString(), "advanced", round(adv), "balance", round(e.salary() - adv),
-                        "lastPaid", lastPaid.get(e.name()), "note", e.note(), "history", history.getOrDefault(e.name(), List.of())));
+                        "nextPayday", nextPayday(e, today).toString(), "lastPayday", period(e, last, paid.getOrDefault(last, 0.0), start, today, recs.getOrDefault(last, List.of())),
+                        "upcoming", period(e, next, paid.getOrDefault(next, 0.0), start, today, recs.getOrDefault(next, List.of())),
+                        "owed", due, "advanced", round(adv), "balance", due, "onPayrollSince", start == null ? null : start.toString(),
+                        "periods", periods, "lastPaid", lastPaid.get(e.name()), "note", e.note(), "history", history.getOrDefault(e.name(), List.of())));
             }
             // Names with records (or starting advances) but no payroll entry yet.
             Set<String> loose = new TreeSet<>(String.CASE_INSENSITIVE_ORDER);
@@ -1516,10 +1635,11 @@ final class DataStore {
                 if (names.contains(n)) continue;
                 double adv = owed.getOrDefault(n, 0.0);
                 totalAdvanced += adv;
-                rows.add(Json.obj("id", null, "name", n, "salary", null, "schedule", null, "nextPayday", null, "advanced", round(adv), "balance", null,
-                        "lastPaid", lastPaid.get(n), "history", history.getOrDefault(n, List.of())));
+                rows.add(Json.obj("id", null, "name", n, "salary", null, "schedule", null, "nextPayday", null, "lastPayday", null, "owed", null,
+                        "advanced", round(adv), "balance", null, "periods", List.of(), "lastPaid", lastPaid.get(n), "history", history.getOrDefault(n, List.of())));
             }
-            return Json.obj("employees", rows, "totalSalary", round(totalSalary), "totalAdvanced", round(totalAdvanced), "today", today.toString());
+            return Json.obj("employees", rows, "totalSalary", round(totalSalary), "totalAdvanced", round(totalAdvanced), "totalOwed", round(totalOwed),
+                    "today", today.toString());
         }
     }
 
