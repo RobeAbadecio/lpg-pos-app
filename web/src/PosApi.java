@@ -8,10 +8,9 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
- * The staff-facing POS: static web app + JSON API. Every data call needs a signed-in staff session.
- * With autoUser set (demo only, see WebServer), visitors are signed in as that user automatically.
+ * One store's POS JSON API. PosGate signs people in and hands each call to the PosApi of the caller's own business.
  */
-final class PosApi implements Http.Handler {
+final class PosApi {
     private static final int MAX_ITEMS = 30;
     /** How long staff without dashboard access can undo what they entered themselves. */
     static final int UNDO_MINUTES = 30;
@@ -19,53 +18,17 @@ final class PosApi implements Http.Handler {
     private final DataStore store;
     private final Auth auth;
     private final ActivityLog log;
-    private final Path appRoot, sharedRoot;
-    private final String autoUser;
-    /** Per-port name, since browsers share cookies across ports of the same host (e.g. demo vs real POS). */
-    private final String COOKIE;
 
-    PosApi(DataStore store, Auth auth, ActivityLog log, Path appRoot, Path sharedRoot, int port, String autoUser) {
+    PosApi(DataStore store, Auth auth, ActivityLog log) {
         this.store = store;
         this.auth = auth;
         this.log = log;
-        this.appRoot = appRoot;
-        this.sharedRoot = sharedRoot;
-        this.autoUser = autoUser;
-        this.COOKIE = "lpg_session_" + port;
     }
 
-    @Override
-    public void handle(Http.Req r) throws IOException {
-        if (!r.path.startsWith("/api/")) {
-            Http.serveStatic(r, appRoot, sharedRoot);
-            return;
-        }
-        Http.requireCsrfHeader(r);
-        switch (r.method + " " + r.path) {
-            case "POST /api/login" -> {
-                login(r);
-                return;
-            }
-            case "POST /api/logout" -> {
-                Auth.Session s = auth.get(r.cookie(COOKIE));
-                if (s != null) log.add(s.username, r.clientIp(), "Signed out");
-                auth.end(r.cookie(COOKIE));
-                r.addHeader("Set-Cookie", COOKIE + "=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0");
-                r.json(200, Json.obj("ok", true));
-                return;
-            }
-            default -> {
-            }
-        }
-
-        Auth.Session s = auth.get(r.cookie(COOKIE));
-        if (s == null && autoUser != null && store.user(autoUser) != null) {
-            s = auth.create(autoUser, r.clientIp(), r.via(), r.header("User-Agent"));
-            setSessionCookie(r, s);
-            log.add(autoUser, r.clientIp(), "Opened the demo POS (no sign-in)");
-        }
-        if (s == null || store.user(s.username) == null) {
-            if (s != null) auth.end(s.token);
+    /** One API call for this store, from session s (PosGate has checked the account and business are active). */
+    void handle(Http.Req r, Auth.Session s) throws IOException {
+        if (store.user(s.username) == null) {
+            auth.end(s.token);
             throw new Http.Error(401, "Please sign in");
         }
 
@@ -131,7 +94,6 @@ final class PosApi implements Http.Handler {
 
     private void route(Http.Req r, String route, String id, Auth.Session s, String who, String ip) throws IOException {
         switch (route) {
-            case "GET me" -> r.json(200, me(s));
             case "GET summary" -> {
                 requireDashboard(who);
                 String range = r.query().getOrDefault("range", "7");
@@ -265,7 +227,7 @@ final class PosApi implements Http.Handler {
             }
             case "POST me/:id" -> changePassword(r, s, id);
             case "GET data" -> {
-                String etag = '"' + store.version() + '"';
+                String etag = "\"" + store.dir().getFileName() + "-" + store.version() + '"';
                 if (r.notModified(etag)) return;
                 r.addHeader("ETag", etag);
                 r.json(200, data(who));
@@ -945,31 +907,6 @@ final class PosApi implements Http.Handler {
 
     // ---------------------------------------------------------------- auth
 
-    private void login(Http.Req r) throws IOException {
-        String ip = r.clientIp();
-        String username = r.param("username").toLowerCase(Locale.ROOT);
-        String password = r.form().getOrDefault("password", "");
-        if (auth.throttled(ip, username)) {
-            throw new Http.Error(429, "Too many failed attempts. Wait 15 minutes and try again.");
-        }
-        DataStore.User user = store.user(username);
-        if (!Auth.verify(password, user)) {
-            auth.recordFailure(ip, username);
-            log.add(username.isEmpty() ? "?" : username, ip, "Failed sign-in (" + r.via() + ")");
-            throw new Http.Error(401, "Wrong username or password");
-        }
-        auth.clearFailures(ip, username);
-        Auth.Session s = auth.create(user.username(), ip, r.via(), r.header("User-Agent"));
-        setSessionCookie(r, s);
-        log.add(user.username(), ip, "Signed in (" + r.via() + ")");
-        r.json(200, me(s));
-    }
-
-    private void setSessionCookie(Http.Req r, Auth.Session s) {
-        r.addHeader("Set-Cookie", COOKIE + "=" + s.token + "; Path=/; HttpOnly; SameSite=Strict; Max-Age="
-                + Auth.SESSION_IDLE_MS / 1000 + (r.secure() ? "; Secure" : ""));
-    }
-
     private void changePassword(Http.Req r, Auth.Session s, String what) throws IOException {
         if (!"password".equals(what)) throw new Http.Error(404, "Unknown endpoint");
         DataStore.User user = store.user(s.username);
@@ -981,11 +918,6 @@ final class PosApi implements Http.Handler {
         auth.revokeUser(s.username, s.token);
         log.add(s.username, r.clientIp(), "Changed own password");
         r.json(200, Json.obj("ok", true));
-    }
-
-    private Map<String, Object> me(Auth.Session s) {
-        DataStore.User u = store.user(s.username);
-        return Json.obj("username", s.username, "demo", autoUser != null, "dashboard", u != null && u.dashboard());
     }
 
     // ---------------------------------------------------------------- data

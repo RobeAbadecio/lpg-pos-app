@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Businesses · LPG POS Admin</title>
+  <link rel="icon" href="/shared/icon.svg">
+  <link rel="stylesheet" href="/shared/base.css">
+  <link rel="stylesheet" href="/shared/account.css">
+</head>
+<body>
+  <main class="acct-shell" id="main-content">
+    <div class="acct-top">
+      <img src="/shared/icon.svg" alt="" width="32" height="32">
+      <div><div class="title">LPG POS platform</div><div class="muted">Businesses, accounts and platform health</div></div>
+      <span class="spacer"></span>
+      <span id="top-actions" hidden>
+        <button class="btn" type="button" id="change-password">Change password</button>
+        <button class="btn" type="button" id="logout">Sign out</button>
+      </span>
+    </div>
+
+    <form id="gate" class="card acct-card acct-narrow acct-form" hidden>
+      <h2 id="gate-title">Platform admin</h2>
+      <p class="acct-hint" id="gate-hint"></p>
+      <label class="field"><span>Password</span><input class="input" name="password" type="password" required minlength="8" autocomplete="current-password"></label>
+      <label class="field" id="gate-confirm" hidden><span>Type it again</span><input class="input" name="confirm" type="password" autocomplete="new-password"></label>
+      <p class="acct-error" role="alert" hidden></p>
+      <button class="btn primary lg block" type="submit" id="gate-submit">Sign in</button>
+    </form>
+
+    <div id="console" hidden>
+      <section class="card acct-card">
+        <div class="acct-top"><h2>Health</h2><span class="spacer"></span><button class="btn" type="button" id="backup">Back up now</button></div>
+        <div class="health" id="health"></div>
+      </section>
+
+      <section class="card acct-card" style="margin-top:16px">
+        <div class="acct-top"><h2>Businesses</h2><span class="spacer"></span><button class="btn primary" type="button" id="add-business">Add business</button></div>
+        <div class="table-wrap"><table class="acct-table stack">
+          <thead><tr><th>Business</th><th>Owner</th><th>Status</th><th>Staff</th><th>Registered</th><th></th></tr></thead>
+          <tbody id="business-rows"></tbody>
+        </table></div>
+      </section>
+
+      <section class="card acct-card" id="accounts-card" style="margin-top:16px" hidden>
+        <div class="acct-top"><h2 id="accounts-title">Accounts</h2></div>
+        <div class="table-wrap"><table class="acct-table stack">
+          <thead><tr><th>Username</th><th>Name</th><th>Role</th><th>Status</th><th></th></tr></thead>
+          <tbody id="account-rows"></tbody>
+        </table></div>
+      </section>
+
+      <section class="card acct-card" style="margin-top:16px">
+        <div class="acct-top"><h2>Audit log</h2><span class="muted" id="audit-scope">All businesses</span></div>
+        <div class="table-wrap"><table class="acct-table stack">
+          <thead><tr><th>Time</th><th>Who</th><th>Business</th><th>What</th></tr></thead>
+          <tbody id="audit-rows"></tbody>
+        </table></div>
+      </section>
+    </div>
+  </main>
+  <script src="/shared/ui.js"></script>
+  <script src="/platform.js"></script>
+</body>
+</html>

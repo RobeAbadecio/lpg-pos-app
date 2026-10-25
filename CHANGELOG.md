@@ -4,6 +4,27 @@ Every update gets a new version number. It's shown in the POS (header, account m
 
 Numbering is `major.minor.patch`: **major** when the data or the way staff work changes a lot, **minor** for new features, **patch** for fixes and small changes.
 
+## Unreleased: multi-business platform, phase 1 (not live yet)
+
+**Several businesses on one server**
+- Each business has its own data folder (`tenants/<id>/`) with the same CSV files as before. Which business a request belongs to comes only from the signed-in session; a business id sent by the browser is ignored.
+- On first start, the existing store's files are **copied** into business 1. The original files stay where they were, for rolling back.
+- Accounts, businesses and the audit log live in a small SQLite database (`platform.db`). Usernames are unique across all businesses. The database itself allows only one active owner per business.
+
+**Sign-up and approval**
+- New businesses register at `/signup.html` and wait for the platform admin's approval. Staff ask to join with their store's 6-letter code; the store owner approves them.
+- The store owner gets a **Team** page (account menu): approve or reject sign-ups, add staff, disable or enable them (a disabled person is signed out at once), reset passwords, dashboard access, store details.
+
+**Platform admin** (localhost only, now with a password set on first visit)
+- `/platform.html`: approve, reject, suspend, reactivate or deactivate businesses; their accounts (approve, disable, reset password, change owner); health (database check, disk space, last backup); audit log.
+- The existing store dashboard shows the business picked there.
+
+**Backups**
+- At start-up and daily: a consistent copy of `platform.db` plus all business folders, in `platform-backups/` (14 kept). Restore with `java -cp "build:lib/*" Backups restore <backup> <data folder>`.
+
+**Setup**
+- One library added: the SQLite driver. `web/fetch-lib.sh` downloads it and checks a pinned SHA-256; `start.sh` runs it.
+
 ## 4.1.0 — 2026-10-24
 
 **Staff salaries** (Dashboard → **Salaries**, for staff with dashboard access; view-only on the admin page's Money tab)

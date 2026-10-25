@@ -16,8 +16,10 @@
   async function loadOverview() {
     try {
       state.overview = await request('GET', '/api/overview');
+      $('store-title').textContent = state.overview.business.name;
       renderOverview();
     } catch (e) {
+      if (e.status === 401 || e.status === 409) { location.href = '/platform.html'; return; }
       setStatus(false, 'Server unreachable');
     }
   }

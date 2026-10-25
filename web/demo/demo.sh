@@ -20,7 +20,8 @@ python3 make_demo_data.py data
 
 # Compile into the demo's own folder so the real server's build/ is never rewritten while it runs.
 rm -rf build && mkdir -p build
-javac -d build ../src/*.java
+../fetch-lib.sh
+javac -d build -cp "../lib/*" ../src/*.java
 
 # Once the server is up, sign two demo staff in so "Signed in now" isn't empty.
 ( for _ in $(seq 1 30); do
@@ -29,4 +30,4 @@ javac -d build ../src/*.java
   done ) &
 
 LPG_PORT=8180 LPG_ADMIN_PORT=8190 LPG_DATA_DIR="$PWD/data" LPG_AUTO_LOGIN=ana \
-  exec java -Dlpg.web="$(cd .. && pwd)" -cp build WebServer
+  exec java -Dlpg.web="$(cd .. && pwd)" -cp "build:../lib/*" WebServer

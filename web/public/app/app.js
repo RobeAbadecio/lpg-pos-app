@@ -194,6 +194,8 @@
     $('change-password').hidden = !!me.demo;
     $('logout').hidden = !!me.demo;
     $('demo-note').hidden = !me.demo;
+    $('store-label').textContent = me.business ? me.business.name : '';
+    $('team-link').hidden = me.role !== 'owner' || !!me.demo;
     updateDashboardAccess();
     go(location.hash.slice(1) || 'sell');
   }

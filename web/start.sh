@@ -13,13 +13,15 @@ if ! java -version 2>&1 | grep -qE 'version "(2[1-9]|[3-9][0-9])'; then
   exit 1
 fi
 
+./fetch-lib.sh
+
 # Recompile when any source file is newer than the last build.
 if [ ! -f build/.stamp ] || [ -n "$(find src -name '*.java' -newer build/.stamp)" ]; then
   echo "Compiling…"
   rm -rf build && mkdir -p build
-  javac -d build src/*.java
+  javac -d build -cp "lib/*" src/*.java
   touch build/.stamp
 fi
 
 # caffeinate keeps the Mac from idle-sleeping while the server runs.
-exec caffeinate -i java -Dlpg.web="$PWD" -cp build WebServer "$@"
+exec caffeinate -i java -Dlpg.web="$PWD" -cp "build:lib/*" WebServer "$@"
