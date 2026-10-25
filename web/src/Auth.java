@@ -19,16 +19,18 @@ final class Auth {
         final String token;      // cookie value, never sent to the admin page
         final String id;         // public handle the admin page uses to revoke
         final String username;
+        final long businessId;   // 0 for the platform admin
         final String ip;
         final String via;        // Internet / Local network / This Mac
         final String userAgent;
         final long created = System.currentTimeMillis();
         volatile long lastSeen = created;
 
-        Session(String username, String ip, String via, String userAgent) {
+        Session(String username, long businessId, String ip, String via, String userAgent) {
             this.token = b64(randomBytes(32));
             this.id = b64(randomBytes(9));
             this.username = username;
+            this.businessId = businessId;
             this.ip = ip;
             this.via = via;
             this.userAgent = userAgent == null ? "" : userAgent;
@@ -74,8 +76,8 @@ final class Auth {
 
     // ---------------------------------------------------------------- sessions
 
-    Session create(String username, String ip, String via, String userAgent) {
-        Session s = new Session(username, ip, via, userAgent);
+    Session create(String username, long businessId, String ip, String via, String userAgent) {
+        Session s = new Session(username, businessId, ip, via, userAgent);
         sessions.put(s.token, s);
         return s;
     }
@@ -133,6 +135,18 @@ final class Auth {
             synchronized (q) {
                 q.addLast(now);
             }
+        }
+    }
+
+    /** For actions limited per client (sign-ups): true and counted when under max in the last hour. */
+    boolean allow(String key, int max) {
+        long now = System.currentTimeMillis();
+        Deque<Long> q = failures.computeIfAbsent("limit:" + key, k -> new ArrayDeque<>());
+        synchronized (q) {
+            while (!q.isEmpty() && q.peekFirst() < now - 60L * 60 * 1000) q.pollFirst();
+            if (q.size() >= max) return false;
+            q.addLast(now);
+            return true;
         }
     }
 

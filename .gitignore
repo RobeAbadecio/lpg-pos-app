@@ -22,3 +22,8 @@ build/
 .DS_Store
 .idea/
 *.iml
+
+# Downloaded by web/fetch-lib.sh (checksum pinned there)
+web/lib/
+# Platform database and its backups live in the data folder, never here
+platform.db*

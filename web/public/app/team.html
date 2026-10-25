@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Team · LPG POS</title>
+  <link rel="icon" href="/shared/icon.svg">
+  <link rel="stylesheet" href="/shared/base.css">
+  <link rel="stylesheet" href="/shared/account.css">
+</head>
+<body>
+  <main class="acct-shell" id="main-content">
+    <div class="acct-top">
+      <img src="/shared/icon.svg" alt="" width="32" height="32">
+      <div><div class="title" id="store-name">Team</div><div class="muted">Staff accounts and store details</div></div>
+      <span class="spacer"></span>
+      <a class="btn" href="/">← Back to POS</a>
+    </div>
+    <p id="problem" class="acct-error" role="alert" hidden></p>
+
+    <section class="card acct-card" id="staff-card" hidden>
+      <div class="acct-top"><h2>Staff</h2><span class="spacer"></span><button class="btn primary" type="button" id="add-staff">Add staff</button></div>
+      <p class="acct-hint">New staff can also sign up themselves on the sign-up page with this store code. You approve them here.</p>
+      <div><span class="code-box" id="store-code">——</span></div>
+      <div class="table-wrap"><table class="acct-table stack">
+        <thead><tr><th>Username</th><th>Name</th><th>Status</th><th>Dashboard</th><th></th></tr></thead>
+        <tbody id="staff-rows"></tbody>
+      </table></div>
+    </section>
+
+    <section class="card acct-card" id="store-card" hidden>
+      <h2>Store details</h2>
+      <form id="store-form" class="acct-form">
+        <label class="field"><span>Store name</span><input class="input" name="name" maxlength="80" required></label>
+        <div class="row">
+          <label class="field"><span>Contact name</span><input class="input" name="contactName" maxlength="80"></label>
+          <label class="field"><span>Mobile number</span><input class="input" name="phone" maxlength="20" required inputmode="tel"></label>
+        </div>
+        <label class="field"><span>Email</span><input class="input" name="email" type="email" maxlength="254"></label>
+        <label class="field"><span>Address</span><input class="input" name="address" maxlength="200"></label>
+        <div><button class="btn primary" type="submit">Save details</button></div>
+      </form>
+    </section>
+  </main>
+  <script src="/shared/ui.js"></script>
+  <script src="/team.js"></script>
+</body>
+</html>

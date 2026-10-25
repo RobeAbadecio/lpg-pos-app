@@ -29,7 +29,7 @@
       </label>
       <p id="login-error" class="login-error" role="alert" hidden></p>
       <button class="btn primary lg block" type="submit">Sign in</button>
-      <p class="muted small-print">Ask your admin if you need an account.</p>
+      <p class="muted small-print">New store? <a href="/signup.html">Register your business</a> · Staff: <a href="/signup.html#staff">join your store</a></p>
       <p class="muted small-print version-line" data-version="long"></p>
     </form>
   </main>
@@ -50,6 +50,8 @@
       <details class="usermenu">
         <summary class="user-chip"><span class="avatar" id="avatar"></span><span class="user-text"><span id="username" class="uname"></span><span class="muted user-sub">Account · Sign out</span></span></summary>
         <div class="menu card">
+          <p class="muted menu-note" id="store-label"></p>
+          <a class="btn ghost block" id="team-link" href="/team.html" hidden>Team &amp; store details</a>
           <button class="btn ghost block" id="help">Fixing mistakes</button>
           <button class="btn ghost block" id="change-password">Change password</button>
           <button class="btn ghost block danger" id="logout">Sign out</button>

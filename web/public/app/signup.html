@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign up · LPG POS</title>
+  <link rel="icon" href="/shared/icon.svg">
+  <link rel="stylesheet" href="/shared/base.css">
+  <link rel="stylesheet" href="/shared/account.css">
+</head>
+<body>
+  <main class="acct-shell">
+    <div class="acct-narrow acct-card card">
+      <div class="acct-top"><img src="/shared/icon.svg" alt="" width="36" height="36"><div class="title">LPG POS</div><span class="spacer"></span><a href="/">Sign in</a></div>
+      <div class="seg" role="group" aria-label="Sign-up type">
+        <button type="button" id="pick-business" aria-pressed="true">Register a business</button>
+        <button type="button" id="pick-staff" aria-pressed="false">Join as staff</button>
+      </div>
+
+      <form id="business-form" class="acct-form" novalidate>
+        <p class="acct-hint">For store owners. We review each new business before it can start. You'll sign in with the username below.</p>
+        <label class="field"><span>Store name</span><input class="input" name="storeName" maxlength="80" required autocomplete="organization"></label>
+        <div class="row">
+          <label class="field"><span>Your name</span><input class="input" name="contactName" maxlength="80" required autocomplete="name"></label>
+          <label class="field"><span>Mobile number</span><input class="input" name="phone" maxlength="20" required inputmode="tel" autocomplete="tel" placeholder="0917 123 4567"></label>
+        </div>
+        <label class="field"><span>Email <span class="muted">(optional)</span></span><input class="input" name="email" type="email" maxlength="254" autocomplete="email"></label>
+        <label class="field"><span>Store address <span class="muted">(optional)</span></span><input class="input" name="address" maxlength="200" autocomplete="street-address"></label>
+        <div class="row">
+          <label class="field"><span>Username</span><input class="input" name="username" maxlength="32" required autocapitalize="none" spellcheck="false" autocomplete="username"></label>
+          <label class="field"><span>Password</span><input class="input" name="password" type="password" minlength="8" maxlength="200" required autocomplete="new-password"></label>
+        </div>
+        <p class="acct-hint">Username: 3–32 letters, numbers, dot, dash or underscore. Password: at least 8 characters.</p>
+        <p class="acct-error" role="alert" hidden></p>
+        <button class="btn primary lg block" type="submit">Register business</button>
+      </form>
+
+      <form id="staff-form" class="acct-form" novalidate hidden>
+        <p class="acct-hint">For staff. Ask the store owner for the store code. They approve your account before you can sign in.</p>
+        <label class="field"><span>Store code</span><input class="input" name="code" maxlength="6" required autocapitalize="characters" spellcheck="false" placeholder="ABC234"></label>
+        <label class="field"><span>Your name</span><input class="input" name="fullName" maxlength="80" required autocomplete="name"></label>
+        <div class="row">
+          <label class="field"><span>Username</span><input class="input" name="username" maxlength="32" required autocapitalize="none" spellcheck="false" autocomplete="username"></label>
+          <label class="field"><span>Password</span><input class="input" name="password" type="password" minlength="8" maxlength="200" required autocomplete="new-password"></label>
+        </div>
+        <p class="acct-error" role="alert" hidden></p>
+        <button class="btn primary lg block" type="submit">Ask to join</button>
+      </form>
+
+      <div id="done" class="acct-ok" role="status" hidden></div>
+    </div>
+  </main>
+  <script src="/shared/ui.js"></script>
+  <script src="/signup.js"></script>
+</body>
+</html>

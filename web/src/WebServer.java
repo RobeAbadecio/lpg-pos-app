@@ -2,9 +2,12 @@ import com.sun.net.httpserver.HttpServer;
 
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 /**
  * LPG POS web server.
@@ -26,31 +29,51 @@ public final class WebServer {
         Path publicDir = webDir.resolve("public");
         Path shared = publicDir.resolve("shared");
 
-        DataStore store = new DataStore(dataDir);
+        Files.createDirectories(dataDir);
+        Platform platform = new Platform(dataDir.resolve("platform.db"));
+        Tenants tenants = new Tenants(dataDir, platform);
+        long migrated = tenants.migrateLegacy(dataDir, System.getenv().getOrDefault("LPG_STORE_NAME", "My LPG store"));
+        if (migrated > 0) System.out.println("  Copied the existing store data into business " + migrated + " (originals left in place).");
+
         String autoUser = System.getenv("LPG_AUTO_LOGIN");
         Path realData = Path.of(System.getProperty("user.home"), "POSSystemData").toAbsolutePath().normalize();
-        if (autoUser != null && (dataDir.equals(realData) || dataDir.equals(webDir.resolve("../POSSystemData").normalize()) || store.user(autoUser) == null)) {
+        Platform.Account auto = autoUser == null ? null : platform.account(autoUser);
+        if (autoUser != null && (dataDir.equals(realData) || dataDir.equals(webDir.resolve("../POSSystemData").normalize()) || auto == null || !auto.active())) {
             System.out.println("  LPG_AUTO_LOGIN ignored: only allowed for demo data with an existing user.");
             autoUser = null;
         }
         Auth auth = new Auth();
-        ActivityLog log = new ActivityLog(dataDir);
         Tunnel tunnel = new Tunnel(port, url -> {
-            log.add("admin", "this Mac", "Public link is now " + url);
+            platform.audit("system", null, "Public link is now " + url, "");
             System.out.println("  Public link (share with staff): " + url);
         });
 
+        PosGate gate = new PosGate(platform, tenants, auth, publicDir.resolve("app"), shared, port, autoUser);
         HttpServer pos = HttpServer.create(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), port), 0);
-        pos.createContext("/", Http.wrap(new PosApi(store, auth, log, publicDir.resolve("app"), shared, port, autoUser)));
+        pos.createContext("/", Http.wrap(gate));
         pos.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
 
         HttpServer admin = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), adminPort), 0);
-        admin.createContext("/", Http.wrap(new AdminApi(store, auth, log, tunnel, publicDir.resolve("admin"), shared, port, adminPort)));
+        admin.createContext("/", Http.wrap(new AdminApi(platform, tenants, gate, auth, tunnel, publicDir.resolve("admin"), shared, port, adminPort)));
         admin.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
+
+        // Backup at start-up, then once a day; a failed backup is logged and never stops the POS.
+        ScheduledExecutorService daily = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "backups");
+            t.setDaemon(true);
+            return t;
+        });
+        daily.scheduleAtFixedRate(() -> {
+            try {
+                Backups.run(platform, tenants);
+            } catch (Exception e) {
+                System.err.println("  Backup failed: " + e.getMessage());
+            }
+        }, 0, 24, TimeUnit.HOURS);
 
         pos.start();
         admin.start();
-        log.add("admin", "this Mac", "Server started");
+        platform.audit("system", null, "Server started", "");
 
         System.out.println();
         System.out.println("  LPG POS web server is running");
@@ -60,9 +83,9 @@ public final class WebServer {
         System.out.println("  Remote staff access:         Cloudflare link only (LAN access disabled)");
         System.out.println("  Data folder:                 " + dataDir);
         if (autoUser != null) System.out.println("  DEMO: POS opens without sign-in, as " + autoUser);
-        if (store.users().isEmpty()) {
+        if (platform.setting("admin_hash") == null) {
             System.out.println();
-            System.out.println("  No staff accounts yet. Open the admin dashboard to create one.");
+            System.out.println("  Open the admin dashboard to set the platform admin password.");
         }
         System.out.println("  Press Ctrl+C to stop.");
         System.out.println();
@@ -70,7 +93,7 @@ public final class WebServer {
         if (List.of(args).contains("--tunnel")) {
             try {
                 tunnel.start();
-                log.add("admin", "this Mac", "Started public link");
+                platform.audit("system", null, "Started public link", "");
             } catch (Exception e) {
                 System.out.println("  Public link not started: " + e.getMessage());
             }
