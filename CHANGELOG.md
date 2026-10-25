@@ -22,6 +22,10 @@ Numbering is `major.minor.patch`: **major** when the data or the way staff work 
 - Database step 4: `brand_color`, `receipt_note`, `logo` and `guide_hidden` on businesses. Older versions ignore these columns, so going back to 5.2.1 keeps working.
 - New calls: `PUT /api/business/brand`, `GET|POST|DELETE /api/business/logo`, `GET|POST /api/guide`; `/api/me` has `brand`.
 - New check: `BrandingCheck` (55 checks).
+## 5.2.2 — 2026-10-25: printed receipts show only the tanks bought
+
+- On a swap, the printed receipt lists the tank the customer bought and the swap fee, not the empty they gave back. The empty and its brand still show on the receipt on screen, in Edit and in the records, and stock still counts it.
+- A tank the customer owes, or a new tank with no empty, is still noted on paper.
 
 ## 5.2.1 — 2026-10-25: staff salaries owed per pay day
 
