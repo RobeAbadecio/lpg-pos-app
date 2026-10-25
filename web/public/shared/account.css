@@ -37,3 +37,21 @@ body { margin: 0; background: var(--page); color: var(--ink); font-family: var(-
   .acct-table.stack td.actions { text-align: left; }
   .acct-table.stack td.actions .btn { margin: 4px 6px 0 0; }
 }
+/* Billing (owner) and payments (platform admin) */
+.st-due, .st-grace { background: rgba(250, 178, 25, .18); color: var(--warning-ink); }
+.st-overdue { background: var(--critical-wash); color: var(--critical); }
+.st-free, .st-approved, .st-paid { background: rgba(12, 163, 12, .12); color: var(--good-ink); }
+.pay-grid { display: grid; grid-template-columns: 240px 1fr; gap: 20px; align-items: start; }
+@media (max-width: 620px) { .pay-grid { grid-template-columns: 1fr; } }
+.pay-qr { display: grid; gap: 8px; justify-items: center; text-align: center; }
+.pay-qr img { width: 100%; max-width: 240px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: #fff; }
+.pay-payee { margin: 0; font-weight: 600; }
+.pay-steps { display: grid; gap: 10px; }
+.pay-amount { display: grid; gap: 2px; }
+.pay-amount b { font-size: 32px; font-weight: 700; letter-spacing: -.5px; font-variant-numeric: tabular-nums; }
+.steps { margin: 0; padding-left: 20px; display: grid; gap: 6px; font-size: 14px; }
+.pay-h { margin: 4px 0 0; font-size: 15px; }
+.warn-list { margin: 4px 0 0; padding-left: 18px; color: var(--warning-ink); font-size: 13px; }
+.receipt-img { max-width: 100%; max-height: 70vh; display: block; margin: 0 auto; border-radius: var(--radius-sm); }
+.qr-thumb { width: 120px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: #fff; }
+.acct-form .check { display: flex; gap: 8px; align-items: center; min-height: 44px; }

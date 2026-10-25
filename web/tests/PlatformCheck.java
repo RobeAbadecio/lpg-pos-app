@@ -75,14 +75,15 @@ public class PlatformCheck {
 
         Auth auth = new Auth();
         Path pub = Path.of("web/public");
-        PosGate gate = new PosGate(platform, tenants, auth, pub.resolve("app"), pub.resolve("shared"), 1, null);
+        Billing billing = new Billing(platform);
+        PosGate gate = new PosGate(platform, billing, tenants, auth, pub.resolve("app"), pub.resolve("shared"), 1, null);
         HttpServer pos = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         pos.createContext("/", Http.wrap(gate));
         pos.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
         pos.start();
         HttpServer adm = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         int adminPort = adm.getAddress().getPort();
-        adm.createContext("/", Http.wrap(new AdminApi(platform, tenants, gate, auth, new Tunnel(1, u -> {}), pub.resolve("admin"), pub.resolve("shared"), 1, adminPort)));
+        adm.createContext("/", Http.wrap(new AdminApi(platform, billing, tenants, gate, auth, new Tunnel(1, u -> {}), pub.resolve("admin"), pub.resolve("shared"), 1, adminPort)));
         adm.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
         adm.start();
         String posUrl = "http://localhost:" + pos.getAddress().getPort();

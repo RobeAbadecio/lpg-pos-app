@@ -6,12 +6,12 @@ import java.util.*;
 import java.util.stream.Stream;
 
 /**
- * Backups of everything the server keeps: a consistent copy of platform.db plus every business's CSV folder, one
- * folder per run in dataDir/platform-backups/ (the 14 newest are kept). Runs at start-up, then daily, and from the
+ * Backups of everything the server keeps: a consistent copy of platform.db, every business's CSV folder and the
+ * payment pictures (platform-files), one folder per run in dataDir/platform-backups/ (the 14 newest are kept). Runs at start-up, then daily, and from the
  * admin page. Each CSV file is replaced atomically when saved, so every copied file is whole.
  *
  * Restore (with the server stopped):  java -cp build:lib/* Backups restore <backup folder> <data folder>
- * The current platform.db and tenants/ are moved aside first, never deleted.
+ * The current platform.db, tenants/ and platform-files/ are moved aside first, never deleted.
  */
 final class Backups {
     static final int KEEP = 14;
@@ -32,6 +32,8 @@ final class Backups {
             if (Files.exists(tmp)) Tenants.deleteTree(tmp);
             platform.backup(tmp.resolve("platform.db"));
             copy(tenants.root(), tmp.resolve("tenants"));
+            Path files = base.getParent().resolve("platform-files");
+            if (Files.isDirectory(files)) copy(files, tmp.resolve("platform-files"));
             Files.move(tmp, target, StandardCopyOption.ATOMIC_MOVE);
             platform.setSetting("last_backup", target.getFileName().toString());
             List<Path> all = list(base);
@@ -61,12 +63,13 @@ final class Backups {
         }
         Path aside = dataDir.resolve("platform-replaced-" + LocalDateTime.now().format(STAMP));
         Files.createDirectories(aside);
-        for (String name : List.of("platform.db", "platform.db-wal", "platform.db-shm", "tenants")) {
+        for (String name : List.of("platform.db", "platform.db-wal", "platform.db-shm", "tenants", "platform-files")) {
             Path p = dataDir.resolve(name);
             if (Files.exists(p)) Files.move(p, aside.resolve(name));
         }
         Files.copy(backup.resolve("platform.db"), dataDir.resolve("platform.db"));
         copy(backup.resolve("tenants"), dataDir.resolve("tenants"));
+        if (Files.isDirectory(backup.resolve("platform-files"))) copy(backup.resolve("platform-files"), dataDir.resolve("platform-files"));
         return aside;
     }
 

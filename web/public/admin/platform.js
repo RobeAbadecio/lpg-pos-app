@@ -1,8 +1,12 @@
-// Platform admin: sign-in, businesses (approve, suspend, reactivate), their accounts, health, backups, audit log.
+// Platform admin: sign-in, payments to check, billing settings, businesses (approve, suspend, reactivate), their
+// accounts, health, backups, audit log.
 (function () {
-  const { h, clear, toast, request, formDialog, confirmDialog } = UI;
+  const { h, clear, toast, request, formDialog, confirmDialog, openDialog } = UI;
   const $ = (id) => document.getElementById(id);
   const LABEL = { pending: 'Waiting for approval', active: 'Active', suspended: 'Suspended', deactivated: 'Deactivated', rejected: 'Rejected', disabled: 'Disabled' };
+  const BILL = { free: 'No fee', active: 'Paid', due: 'Due soon', grace: 'Late', overdue: 'Overdue' };
+  const PAY = { pending: 'Waiting', approved: 'Approved', rejected: 'Rejected' };
+  const peso = (c) => '₱' + (c / 100).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const state = { businesses: [], open: null };
   let setupMode = false;
 
@@ -71,6 +75,7 @@
       state.businesses = p.businesses;
       renderHealth(p.health);
       renderBusinesses();
+      await loadBilling();
       if (state.open) await openAccounts(state.open);
       await loadAudit();
     } catch (e) {
@@ -116,16 +121,18 @@
         if (b.status === 'suspended') actions.push(btn('Deactivate', () => setStatus(b, 'deactivated', 'Deactivate ' + b.name + '?', 'For businesses that have left. Records are kept and it can be reactivated.')));
       }
       if (b.status !== 'rejected') actions.push(btn('Accounts', () => openAccounts(b.id)));
+      if (b.status !== 'rejected' && b.status !== 'pending') actions.push(btn('Billing', () => editBilling(b)));
       actions.push(btn('Details', () => editBusiness(b)));
       return h('tr', { class: state.open === b.id ? 'is-selected' : '' },
         h('td', {}, h('b', {}, b.name), h('div', { class: 'muted' }, [b.contactName, b.phone, b.email].filter(Boolean).join(' · '))),
         h('td', {}, b.owner || '—'),
         h('td', {}, st(b.status)),
+        h('td', {}, billingCell(b)),
         h('td', {}, String(b.staff) + (b.pendingStaff ? ' (+' + b.pendingStaff + ' waiting)' : '') + (b.online ? ' · ' + b.online + ' online' : '')),
         h('td', { class: 'nowrap' }, (b.created || '').slice(0, 10)),
         h('td', { class: 'actions' }, actions));
     });
-    clear($('business-rows'), rows.length ? rows : h('tr', {}, h('td', { colspan: 6, class: 'muted' }, 'No businesses yet.')));
+    clear($('business-rows'), rows.length ? rows : h('tr', {}, h('td', { colspan: 7, class: 'muted' }, 'No businesses yet.')));
   }
 
   const PROFILE = [
@@ -156,6 +163,122 @@
       refresh();
     } catch (e) {
       toast(e.message, true);
+    }
+  });
+
+  // ------------------------------------------------------------------ billing
+
+  function billingCell(b) {
+    const s = b.billing || {};
+    if (b.status === 'pending' || b.status === 'rejected') return h('span', { class: 'muted' }, '—');
+    return [h('span', { class: 'st st-' + s.state }, BILL[s.state] || s.state),
+      s.state !== 'free' && s.paidUntil ? h('div', { class: 'muted' }, 'until ' + s.paidUntil) : null];
+  }
+
+  function editBilling(b) {
+    formDialog({ title: 'Billing · ' + b.name,
+      message: 'Use “Paid until” for a payment made another way (for example cash). A free store never gets an invoice.',
+      fields: [
+        { name: 'exempt', label: 'Fee', type: 'select', value: b.billingExempt ? '1' : '0', options: [{ value: '0', label: 'Pays the monthly fee' }, { value: '1', label: 'Free of charge' }] },
+        { name: 'paidUntil', label: 'Paid until', type: 'date', value: (b.billing && b.billing.paidUntil) || '' }],
+      submit: 'Save',
+      onSubmit: (v) => {
+        const data = {};
+        if (v.exempt !== (b.billingExempt ? '1' : '0')) data.exempt = v.exempt;
+        if (v.paidUntil && v.paidUntil !== ((b.billing && b.billing.paidUntil) || '')) data.paidUntil = v.paidUntil;
+        return Object.keys(data).length ? request('POST', `/api/businesses/${b.id}/billing`, data) : true;
+      } }).then((v) => { if (v) { toast('Billing saved'); refresh(); } });
+  }
+
+  async function loadBilling() {
+    const { settings, payments } = await request('GET', '/api/billing');
+    const f = $('billing-form');
+    if (!f.dataset.loaded) { // don't overwrite what the admin is typing on a refresh
+      f.on.checked = settings.on;
+      f.price.value = (settings.price / 100).toFixed(2);
+      f.trialDays.value = settings.trialDays;
+      f.graceDays.value = settings.graceDays;
+      f.payee.value = settings.payee;
+      f.note.value = settings.note;
+      f.dataset.loaded = '1';
+    }
+    clear($('billing-state'), h('span', { class: 'st st-' + (settings.on ? 'active' : 'pending') }, settings.on ? 'Charging' : 'Off'));
+    $('qr-thumb').hidden = !settings.qr;
+    if (settings.qr) $('qr-thumb').src = '/api/billing/qr?' + Date.now();
+    $('qr-hint').textContent = settings.qr ? 'Owners see this QR on their Billing page. Pick a new file to replace it.'
+      : 'Upload your GoTyme QR (PNG or JPEG, at most 2 MB). Owners see it on their Billing page.';
+
+    const waiting = payments.filter((p) => p.status === 'pending').length;
+    $('queue-count').textContent = waiting ? waiting + ' waiting' : 'Nothing waiting';
+    clear($('payment-rows'), payments.length ? payments.map(paymentRow)
+      : h('tr', {}, h('td', { colspan: 7, class: 'muted' }, 'No payments yet.')));
+  }
+
+  function paymentRow(p) {
+    const actions = [];
+    if (p.receipt) actions.push(btn('Receipt', () => openDialog({ title: 'Receipt · ' + p.reference, wide: true, submit: null, cancel: 'Close',
+      body: h('img', { class: 'receipt-img', src: `/api/payments/${p.id}/receipt`, alt: 'Receipt screenshot sent by ' + p.business }) })));
+    if (p.status === 'pending') {
+      actions.push(btn('Approve', async () => {
+        if (await confirmDialog('Approve ' + peso(p.amount) + ' from ' + p.business + '?',
+          'Only if your GoTyme history shows this payment (reference ' + p.reference + '). The store gets one more month.', 'Approve')) payAction(p, 'approve', null, 'Approved');
+      }, 'btn primary small'));
+      actions.push(btn('Reject', () => formDialog({ title: 'Reject payment ' + p.reference + '?',
+        message: 'The owner sees the reason and can send it again.',
+        fields: [{ name: 'note', label: 'Reason', full: true, placeholder: 'e.g. No payment with this reference' }], submit: 'Reject', danger: true,
+        onSubmit: (v) => request('POST', `/api/payments/${p.id}/reject`, v) }).then((v) => { if (v) { toast('Rejected'); refresh(); } }), 'btn small danger'));
+    }
+    return h('tr', {},
+      h('td', { class: 'nowrap' }, (p.submitted || '').slice(0, 16)),
+      h('td', {}, h('b', {}, p.business || '#' + p.businessId), h('div', { class: 'muted' }, 'by ' + p.submittedBy)),
+      h('td', { class: 'nowrap' }, p.invoice ? [p.invoice.number, h('div', { class: 'muted' }, 'asks ' + peso(p.invoice.amount))] : '—'),
+      h('td', {}, h('b', {}, peso(p.amount)), h('div', { class: 'muted' }, 'on ' + p.paidOn)),
+      h('td', {}, p.reference, p.warnings && p.warnings.length ? h('ul', { class: 'warn-list' }, p.warnings.map((w) => h('li', {}, w))) : null),
+      h('td', {}, h('span', { class: 'st st-' + p.status }, PAY[p.status] || p.status), p.note ? h('div', { class: 'muted' }, p.note) : null),
+      h('td', { class: 'actions' }, actions));
+  }
+
+  async function payAction(p, action, data, done) {
+    try {
+      await request('POST', `/api/payments/${p.id}/${action}`, data);
+      toast(done);
+      await refresh();
+    } catch (e) {
+      toast(e.message, true);
+    }
+  }
+
+  $('billing-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const f = e.target;
+    try {
+      await request('PUT', '/api/billing', { on: f.on.checked ? '1' : '0', price: f.price.value.trim(), trialDays: f.trialDays.value,
+        graceDays: f.graceDays.value, payee: f.payee.value.trim(), note: f.note.value.trim() });
+      toast('Billing settings saved');
+      await refresh();
+    } catch (ex) {
+      toast(ex.message, true);
+    }
+  });
+
+  $('qr-file').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    try {
+      if (file.size > 2 * 1024 * 1024) throw new Error('The picture is too big (at most 2 MB)');
+      const image = await new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(r.result);
+        r.onerror = () => reject(new Error('That file can’t be read'));
+        r.readAsDataURL(file);
+      });
+      await request('POST', '/api/billing/qr', { image });
+      toast('QR code uploaded');
+      await loadBilling();
+    } catch (ex) {
+      toast(ex.message, true);
+    } finally {
+      e.target.value = '';
     }
   });
 

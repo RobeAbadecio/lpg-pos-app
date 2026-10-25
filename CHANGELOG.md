@@ -4,6 +4,26 @@ Every update gets a new version number. It's shown in the POS (header, account m
 
 Numbering is `major.minor.patch`: **major** when the data or the way staff work changes a lot, **minor** for new features, **patch** for fixes and small changes.
 
+## 5.1.0 — 2026-10-25: monthly billing, phase 2
+
+**Monthly fee per business** (platform admin → Billing settings)
+- Price per month (₱10 to start), free days for a new business (7), and grace days after the paid date (7). Billing is **off** until the admin turns it on, after uploading the GoTyme QR code. Business 1 (the platform owner's own store) never pays; any store can be made free on its **Billing** button.
+- Each business is paid up to a date. A week before that date it gets an invoice for the next month. Every open invoice has its own amount (the price plus a few centavos, for example ₱10.37) so payments are easy to tell apart in the GoTyme history.
+- After the paid date the POS keeps working for the grace days, with a warning bar. After that the store is **overdue**: everyone can still sign in, see their records and pay, but new records can't be saved until the payment is approved.
+
+**Paying** (store owner → account menu → **Billing**)
+- Shows the amount, the GoTyme QR and short steps. The owner types the reference number from their receipt, the amount and date, and may add a screenshot (shrunk on the phone before sending; PNG or JPEG only, checked by content).
+- A reference number can be used once across all businesses; an invoice can have one payment waiting at a time.
+
+**Checking payments** (platform admin → **Payments to check**)
+- Waiting payments first, with warnings (wrong amount, a reference sent before, paid before the invoice existed) and the receipt picture. Approve adds one month (from the day of approval if the store was locked); reject asks for a reason the owner sees.
+- Approving is a single conditional database update, so a payment is applied once even if Approve is clicked many times.
+- The admin can also set a "paid until" date directly, for cash payments.
+
+**Other**
+- Backups now include `platform-files/` (QR code and receipt pictures).
+- New test: `BillingCheck` (73 checks).
+
 ## 5.0.0 — 2026-10-25: multi-business platform, phase 1
 
 **Several businesses on one server**

@@ -36,9 +36,43 @@
       </section>
 
       <section class="card acct-card" style="margin-top:16px">
+        <div class="acct-top"><h2>Payments to check</h2><span class="muted" id="queue-count"></span></div>
+        <p class="acct-hint">Open your GoTyme app and find a payment with the same amount and reference before approving. Approving adds one month.</p>
+        <div class="table-wrap"><table class="acct-table stack">
+          <thead><tr><th>Sent</th><th>Business</th><th>Invoice</th><th>Paid</th><th>Reference</th><th>Status</th><th></th></tr></thead>
+          <tbody id="payment-rows"></tbody>
+        </table></div>
+      </section>
+
+      <section class="card acct-card" style="margin-top:16px">
+        <div class="acct-top"><h2>Billing settings</h2><span class="spacer"></span><span id="billing-state"></span></div>
+        <form id="billing-form" class="acct-form">
+          <label class="check"><input type="checkbox" name="on"> Charge businesses (turn on after the QR code is uploaded)</label>
+          <div class="row">
+            <label class="field"><span>Monthly price (₱)</span><input class="input" name="price" inputmode="decimal" required></label>
+            <label class="field"><span>Free days for a new business</span><input class="input" name="trialDays" type="number" min="0" max="90" required></label>
+          </div>
+          <div class="row">
+            <label class="field"><span>Grace days after the paid date</span><input class="input" name="graceDays" type="number" min="0" max="60" required><small class="muted">The POS keeps working, with a warning. After these days, new records can’t be saved.</small></label>
+            <label class="field"><span>Account name shown under the QR</span><input class="input" name="payee" maxlength="120" placeholder="e.g. R. Abadecio · GoTyme"></label>
+          </div>
+          <label class="field"><span>Note for payers <span class="muted">(optional)</span></span><input class="input" name="note" maxlength="300"></label>
+          <div><button class="btn primary" type="submit">Save billing settings</button></div>
+        </form>
+        <div class="acct-top">
+          <img class="qr-thumb" id="qr-thumb" alt="Current payment QR code" hidden>
+          <div>
+            <b>Payment QR code</b>
+            <p class="acct-hint" id="qr-hint">Upload your GoTyme QR (PNG or JPEG, at most 2 MB). Owners see it on their Billing page.</p>
+            <input type="file" id="qr-file" accept="image/png,image/jpeg" aria-label="Upload payment QR code">
+          </div>
+        </div>
+      </section>
+
+      <section class="card acct-card" style="margin-top:16px">
         <div class="acct-top"><h2>Businesses</h2><span class="spacer"></span><button class="btn primary" type="button" id="add-business">Add business</button></div>
         <div class="table-wrap"><table class="acct-table stack">
-          <thead><tr><th>Business</th><th>Owner</th><th>Status</th><th>Staff</th><th>Registered</th><th></th></tr></thead>
+          <thead><tr><th>Business</th><th>Owner</th><th>Status</th><th>Billing</th><th>Staff</th><th>Registered</th><th></th></tr></thead>
           <tbody id="business-rows"></tbody>
         </table></div>
       </section>

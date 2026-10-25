@@ -15,6 +15,7 @@ final class PosGate implements Http.Handler {
     private static final Pattern EMAIL = Pattern.compile("[^@\\s]{1,64}@[^@\\s]{1,190}\\.[^@\\s]{2,}");
 
     private final Platform platform;
+    private final Billing billing;
     private final Tenants tenants;
     private final Auth auth;
     private final Path appRoot, sharedRoot;
@@ -23,8 +24,9 @@ final class PosGate implements Http.Handler {
     private final String COOKIE;
     private final Map<Long, PosApi> apis = new ConcurrentHashMap<>();
 
-    PosGate(Platform platform, Tenants tenants, Auth auth, Path appRoot, Path sharedRoot, int port, String autoUser) {
+    PosGate(Platform platform, Billing billing, Tenants tenants, Auth auth, Path appRoot, Path sharedRoot, int port, String autoUser) {
         this.platform = platform;
+        this.billing = billing;
         this.tenants = tenants;
         this.auth = auth;
         this.appRoot = appRoot;
@@ -83,8 +85,18 @@ final class PosGate implements Http.Handler {
                 business(r, s, a);
                 return;
             }
+            case "billing" -> {
+                billing(r, s, a, seg);
+                return;
+            }
             default -> {
             }
+        }
+        // Overdue: records can still be looked at (and passwords changed), but nothing new is saved.
+        if (!r.method.equals("GET") && !seg[0].equals("me") && billing.state(platform.business(s.businessId)).locked()) {
+            throw new Http.Error(402, a.owner()
+                    ? "Your LPG POS subscription is overdue, so new records can't be saved. Pay on the Billing page (account menu) to continue."
+                    : "The store's LPG POS subscription is overdue, so new records can't be saved. Ask the store owner to pay.");
         }
         apis.computeIfAbsent(s.businessId, id -> {
             Tenants.Tenant t = tenants.get(id);
@@ -167,8 +179,10 @@ final class PosGate implements Http.Handler {
     private Map<String, Object> me(Auth.Session s, Platform.Account a) {
         DataStore.User u = tenants.get(s.businessId).store().user(s.username);
         Platform.Business b = platform.business(s.businessId);
+        Billing.State bs = billing.state(b);
         return Json.obj("username", s.username, "demo", autoUser != null, "dashboard", u != null && u.dashboard(),
-                "role", a.role(), "business", Json.obj("name", b.name(), "code", a.owner() ? b.code() : null));
+                "role", a.role(), "business", Json.obj("name", b.name(), "code", a.owner() ? b.code() : null),
+                "billing", Json.obj("state", bs.state(), "paidUntil", bs.paidUntil(), "lockDate", bs.lockDate()));
     }
 
     // ---------------------------------------------------------------- sign-up
@@ -295,6 +309,47 @@ final class PosGate implements Http.Handler {
                 phone, email, text(r, "address", "Address", 0, 200, false), s.username);
         tenants.get(s.businessId).log().add(s.username, r.clientIp(), "Updated the store's details");
         r.json(200, Json.obj("ok", true));
+    }
+
+    /** Billing page (store owner): what is owed, how to pay, and sending a payment's reference number. */
+    private void billing(Http.Req r, Auth.Session s, Platform.Account me, String[] seg) throws IOException {
+        if (!me.owner()) throw new Http.Error(403, "Only the store owner can see billing");
+        Platform.Business b = platform.business(s.businessId);
+        String route = r.method + " " + String.join("/", Arrays.copyOfRange(seg, 1, seg.length));
+        switch (route) {
+            case "GET " -> {
+                Map<String, Object> set = billing.settings();
+                List<Object> invoices = new ArrayList<>(), payments = new ArrayList<>();
+                for (Billing.Invoice i : billing.invoices(b.id())) invoices.add(Billing.invoiceOut(i));
+                for (Billing.Payment p : billing.payments(b.id())) payments.add(Billing.paymentOut(p));
+                r.json(200, Json.obj("summary", billing.summary(b), "price", set.get("price"), "graceDays", set.get("graceDays"),
+                        "payee", set.get("payee"), "note", set.get("note"), "qr", set.get("qr"), "invoices", invoices, "payments", payments));
+            }
+            case "GET qr" -> {
+                Path qr = billing.qrFile();
+                if (qr == null) throw new Http.Error(404, "No QR code yet");
+                r.image(qr.toString().endsWith(".png") ? "image/png" : "image/jpeg", java.nio.file.Files.readAllBytes(qr));
+            }
+            case "POST pay" -> {
+                if (!auth.allow("pay:" + s.businessId, 10)) throw new Http.Error(429, "Too many tries. Try again in an hour.");
+                r.allowLargeBody();
+                long invoiceId;
+                try {
+                    invoiceId = Long.parseLong(r.param("invoice"));
+                } catch (NumberFormatException e) {
+                    throw new Http.Error(400, "No invoice picked");
+                }
+                String reference = Billing.reference(r.param("reference"));
+                int amount = Billing.centavos(r.param("amount"), "Amount paid");
+                java.time.LocalDate paidOn = Billing.date(r.param("paidOn"), "Date paid");
+                if (paidOn.isAfter(Billing.today()) || paidOn.isBefore(Billing.today().minusDays(60))) throw new Http.Error(400, "Date paid: within the last 60 days");
+                String pic = r.form().getOrDefault("receipt", "");
+                long id = billing.submit(b.id(), invoiceId, reference, amount, paidOn.toString(), pic.isEmpty() ? null : Billing.image(pic), s.username);
+                tenants.get(b.id()).log().add(s.username, r.clientIp(), "Sent payment " + Billing.peso(amount) + " (ref " + reference + ")");
+                r.json(201, Json.obj("ok", true, "id", id));
+            }
+            default -> throw new Http.Error(404, "Unknown endpoint");
+        }
     }
 
     // ---------------------------------------------------------------- input checks (also used by AdminApi)
