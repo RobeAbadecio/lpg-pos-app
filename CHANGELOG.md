@@ -4,7 +4,7 @@ Every update gets a new version number. It's shown in the POS (header, account m
 
 Numbering is `major.minor.patch`: **major** when the data or the way staff work changes a lot, **minor** for new features, **patch** for fixes and small changes.
 
-## Unreleased: multi-business platform, phase 1 (not live yet)
+## 5.0.0 — 2026-10-25: multi-business platform, phase 1
 
 **Several businesses on one server**
 - Each business has its own data folder (`tenants/<id>/`) with the same CSV files as before. Which business a request belongs to comes only from the signed-in session; a business id sent by the browser is ignored.
