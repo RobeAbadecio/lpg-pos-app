@@ -125,11 +125,13 @@ final class Auth {
     // ---------------------------------------------------------------- throttling
 
     boolean throttled(String ip, String username) {
-        return recent("ip:" + ip) >= MAX_FAILURES || recent("user:" + username) >= MAX_FAILURES;
+        // Per username the limit is higher, so someone guessing from elsewhere can't easily lock the owner out.
+        return recent("ip:" + ip) >= MAX_FAILURES || recent("user:" + username) >= MAX_FAILURES * 3;
     }
 
     void recordFailure(String ip, String username) {
         long now = System.currentTimeMillis();
+        if (failures.size() > 50_000) failures.clear(); // many made-up usernames: never let the list grow without end
         for (String key : List.of("ip:" + ip, "user:" + username)) {
             Deque<Long> q = failures.computeIfAbsent(key, k -> new ArrayDeque<>());
             synchronized (q) {

@@ -25,13 +25,16 @@ final class Backups {
 
     static synchronized Path run(Platform platform, Tenants tenants) {
         Path base = dir(platform);
-        Path target = base.resolve(LocalDateTime.now().format(STAMP));
+        String stamp = LocalDateTime.now().format(STAMP);
+        Path target = base.resolve(stamp);
+        // Two backups in the same second (start-up and "Back up now"): the second gets -2, -3, ...
+        for (int n = 2; Files.exists(target); n++) target = base.resolve(stamp + "-" + n);
         Path tmp = base.resolve("." + target.getFileName() + ".tmp");
         try {
             Files.createDirectories(base);
             if (Files.exists(tmp)) Tenants.deleteTree(tmp);
             platform.backup(tmp.resolve("platform.db"));
-            copy(tenants.root(), tmp.resolve("tenants"));
+            copyTenants(tenants, tmp.resolve("tenants"));
             Path files = base.getParent().resolve("platform-files");
             if (Files.isDirectory(files)) copy(files, tmp.resolve("platform-files"));
             Files.move(tmp, target, StandardCopyOption.ATOMIC_MOVE);
@@ -87,6 +90,33 @@ final class Backups {
         }
         out.put("lastBackup", platform.setting("last_backup"));
         return out;
+    }
+
+    /** Each business's folder is copied while its store is locked, so a sale being saved is either all in or not at all. */
+    private static void copyTenants(Tenants tenants, Path to) throws IOException {
+        Files.createDirectories(to);
+        List<Path> dirs;
+        try (Stream<Path> s = Files.list(tenants.root())) {
+            dirs = s.filter(p -> !p.getFileName().toString().startsWith(".")).sorted().toList();
+        }
+        for (Path d : dirs) {
+            Path dest = to.resolve(d.getFileName().toString());
+            String name = d.getFileName().toString();
+            if (!Files.isDirectory(d) || !name.matches("[0-9]+")) {
+                if (Files.isDirectory(d)) copy(d, dest);
+                else Files.copy(d, dest, StandardCopyOption.COPY_ATTRIBUTES);
+                continue;
+            }
+            IOException[] failed = {null};
+            tenants.get(Long.parseLong(name)).store().locked(() -> {
+                try {
+                    copy(d, dest);
+                } catch (IOException e) {
+                    failed[0] = e;
+                }
+            });
+            if (failed[0] != null) throw failed[0];
+        }
     }
 
     private static void copy(Path from, Path to) throws IOException {

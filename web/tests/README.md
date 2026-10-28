@@ -91,3 +91,13 @@ staff paid back, a purchase on credit with the owner's money, expenses; then the
 Sales and Money reports, the dashboard and the (?) explanations. Also salary changes (pay days before keep their salary),
 centavo rounding, and two businesses kept apart. ExplainCheck recomputes every customer and supplier balance, stock and
 salary owed from the records and checks each (?) explanation against the figure shown.
+
+## Pilot readiness check (5.5.0)
+
+```sh
+java -cp "/tmp/lpg-check:web/lib/*" PilotCheck
+```
+
+It covers: who may void, edit, change prices and stock (staff vs owner), a sale or payment sent twice saved once (also
+8 taps at once), another store reaching records by id, an unfinished change put back at start-up, a failed write
+rolled back at once, backups taken while sales are saved, the `/healthz` link and the sign-in limits.

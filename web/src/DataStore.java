@@ -322,7 +322,7 @@ final class DataStore {
     }
 
     private final Path dir;
-    private final Object lock = new Object();
+    private final Tx lock = new Tx();
     /**
      * The business as it stood on the start date. Maps keep the order entered. stock: product → {with load, empty};
      * atRefiller: supplier → product → tanks; customerTanks: our tanks a customer has; deposits: a customer's own
@@ -365,17 +365,18 @@ final class DataStore {
         // users too: the POS data carries the viewer's dashboard permission.
         all = List.of(customers, products, lines, receipts, payments, movements, suppliers, refills, supplierPayments, tankReturns, paybacks, expenses, users,
                 openings, deposits, employees);
+        lock.recover();
     }
 
     Path dir() { return dir; }
 
     Map<String, Object> adminRecords(String table) throws IOException {
-        synchronized (lock) { return DatabaseEditor.read(dir, table); }
+        try (Tx.Hold txHold = lock.hold()) { return DatabaseEditor.read(dir, table); }
     }
 
     Map<String, Object> correctRecord(String table, String mode, String id, String revision,
                                       String[] row, String reason, ActivityLog log) throws IOException {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             DatabaseEditor.Change change = DatabaseEditor.prepare(dir, table, mode, id, revision, row, reason);
             Table target = all.stream().filter(t -> t.path.getFileName().toString().equals(table + ".csv"))
                     .findFirst().orElseThrow(() -> new Http.Error(404, "Unknown business table"));
@@ -396,7 +397,7 @@ final class DataStore {
     // ---------------------------------------------------------------- customers
 
     List<Customer> customers() {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             List<Customer> out = new ArrayList<>();
             for (String[] r : customers.rows()) out.add(new Customer(col(r, 0), col(r, 1), col(r, 2), col(r, 3), col(r, 4)));
             return out;
@@ -408,7 +409,7 @@ final class DataStore {
     }
 
     Customer addCustomer(String first, String last, String contact, String address) {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             List<String[]> rows = customers.copy();
             String id = nextId(rows);
             rows.add(new String[]{id, first, last, contact, address});
@@ -418,14 +419,14 @@ final class DataStore {
     }
 
     boolean updateCustomer(String id, String first, String last, String contact, String address) {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             return customers.replace(id, new String[]{id, first, last, contact, address});
         }
     }
 
     /** Returns the number of receipts blocking deletion, 0 when deleted, -1 when not found, -2 when in the starting balances or deposits. */
     int deleteCustomer(String id) {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             long used = receipts().stream().filter(r -> r.customerId().equals(id)).count();
             if (used > 0) return (int) used;
             if (inOpening("customer", id) || deposits().stream().anyMatch(d -> d.customerId().equals(id))) return -2;
@@ -436,7 +437,7 @@ final class DataStore {
     // ---------------------------------------------------------------- products
 
     List<Product> products() {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             List<Product> out = new ArrayList<>();
             for (String[] r : products.rows()) {
                 out.add(new Product(col(r, 0), col(r, 1), num(col(r, 2), 0), num(col(r, 3), 0),
@@ -457,7 +458,7 @@ final class DataStore {
     }
 
     Product addProduct(Product p) {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             List<String[]> rows = products.copy();
             Product saved = new Product(nextId(rows), p.brand(), p.price(), p.weight(), p.reorderLevel(), p.tankPrice(), p.refillCost(), p.tankCost(), p.swapFee());
             rows.add(productRow(saved));
@@ -467,7 +468,7 @@ final class DataStore {
     }
 
     boolean updateProduct(Product p) {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             return products.replace(p.id(), productRow(p));
         }
     }
@@ -483,7 +484,7 @@ final class DataStore {
      * movements go with it, so a product added later under the same id doesn't inherit them.
      */
     String deleteProduct(String id) {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             if (product(id) == null) return "Product not found";
             long used = lines().stream().filter(l -> l.productId().equals(id) || l.emptyProductId().equals(id)).count();
             if (used > 0) return "This product is on " + used + " receipt line(s), so it can't be deleted.";
@@ -507,7 +508,7 @@ final class DataStore {
     }
 
     List<Line> lines() {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             Map<String, Product> prods = productMap();
             List<Line> out = new ArrayList<>();
             for (String[] r : lines.rows()) {
@@ -536,7 +537,7 @@ final class DataStore {
 
     /** All receipts, oldest first. */
     List<Receipt> receipts() {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             Map<String, List<Line>> grouped = new LinkedHashMap<>();
             for (Line l : lines()) grouped.computeIfAbsent(l.receiptId(), k -> new ArrayList<>()).add(l);
             Map<String, String[]> meta = new HashMap<>();
@@ -565,7 +566,7 @@ final class DataStore {
     }
 
     List<Payment> payments() {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             List<Payment> out = new ArrayList<>();
             for (String[] r : payments.rows()) {
                 out.add(new Payment(col(r, 0), col(r, 1), parseTime(col(r, 1)), col(r, 2), col(r, 3),
@@ -598,7 +599,7 @@ final class DataStore {
     /** As above; fromDeposit: the empties handed over are the customer's tanks already kept at the store. */
     Receipt createReceipt(String customerId, String staff, List<LineInput> items, double discount, double paidNow, String note, String payMethod,
                           boolean fromDeposit) {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             checkStock(items, Map.of());
             Map<String, Integer> fromKept = new LinkedHashMap<>();
             if (fromDeposit) {
@@ -646,7 +647,7 @@ final class DataStore {
     /** As above; day (when not null) moves the receipt to that day, keeping its time of day. */
     Receipt updateReceipt(String id, String customerId, List<LineInput> items, double discount, double paidAtSale, String note, String payMethod,
                           LocalDate day) {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             Receipt old = receipt(id);
             if (old == null) return null;
             String time = day == null || old.time() == null ? old.rawTime() : day.atTime(old.time().toLocalTime()).format(TIME);
@@ -692,7 +693,7 @@ final class DataStore {
 
     /** Deletes a receipt with its items and payments; its stock goes back. Returns it, or null. */
     Receipt voidReceipt(String id) {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             Receipt r = receipt(id);
             if (r == null) return null;
             int owed = r.lines().stream().filter(Line::owesTank).mapToInt(Line::qty).sum();
@@ -756,7 +757,7 @@ final class DataStore {
     }
 
     List<Payment> addPayment(String customerId, String receiptId, double amount, String staff, String note, String method) {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             List<Receipt> rs = receipts();
             Map<String, Double> paid = paidByReceipt(rs);
             // What's owed, oldest first: the starting balance (receipt "O" + customer id), then unpaid receipts.
@@ -792,7 +793,7 @@ final class DataStore {
     // ---------------------------------------------------------------- tanks customers owe
 
     List<TankReturn> tankReturns() {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             List<TankReturn> out = new ArrayList<>();
             for (String[] r : tankReturns.rows()) {
                 String kind = emptyKind(col(r, 7));
@@ -808,7 +809,7 @@ final class DataStore {
      * tanks first, whatever brand comes back (a customer may return another brand).
      */
     Map<String, List<OwedTank>> owedTanks() {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             Map<String, List<OwedTank>> out = new LinkedHashMap<>();
             Opening o = opening();
             if (o != null) {
@@ -842,7 +843,7 @@ final class DataStore {
 
     /** Tanks this customer still owes (taken without an empty, minus what they brought back). */
     int owedCount(String customerId) {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             int owed = 0;
             Opening o = opening();
             if (o != null) for (int n : o.customerTanks().getOrDefault(customerId, Map.of()).values()) owed += n;
@@ -866,7 +867,7 @@ final class DataStore {
     TankReturn returnTanks(Customer c, Product p, int qty, String staff, String remark, String kind, String brand) {
         kind = emptyKind(kind);
         brand = kind.equals("other") ? (brand == null ? "" : brand.trim()) : "";
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             int owed = owedCount(c.id());
             if (owed <= 0) throw new Conflict(c.name() + " doesn't owe any tanks.");
             if (qty > owed) throw new Conflict(c.name() + " owes only " + owed + " tank" + (owed == 1 ? "" : "s") + ".");
@@ -883,7 +884,7 @@ final class DataStore {
     // ---------------------------------------------------------------- inventory
 
     List<Movement> movements() {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             List<Movement> out = new ArrayList<>();
             for (String[] r : movements.rows()) {
                 out.add(new Movement(col(r, 0), col(r, 1), parseTime(col(r, 1)), col(r, 2), col(r, 3),
@@ -896,7 +897,7 @@ final class DataStore {
 
     /** Tanks per product id: with load, empty (good), damaged, at the refiller. */
     Map<String, Stock> stock() {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             Map<String, int[]> s = new HashMap<>();
             Opening o = opening();
             if (o != null) {
@@ -933,7 +934,7 @@ final class DataStore {
     /** Records a stock change; refuses one that would leave any count below zero. */
     Movement addMovement(Product p, String type, int loaded, int empty, int damaged, int atRefiller,
                          String staff, String note, String refillId, double unitCost) {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             Stock now = stock().getOrDefault(p.id(), Stock.NONE);
             if (now.loaded() + loaded < 0) throw new Conflict("Only " + now.loaded() + " × " + p.label() + " with load on hand.");
             if (now.empty() + empty < 0) throw new Conflict("Only " + now.empty() + " good empty " + p.label() + " tanks on hand.");
@@ -961,7 +962,7 @@ final class DataStore {
 
     /** As above; adds the stock change it recorded to made. */
     Stock adjustTo(Product p, String type, int loaded, int empty, Integer damaged, String staff, String note, List<Movement> made) {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             Stock before = stock().getOrDefault(p.id(), Stock.NONE);
             if (damaged == null) damaged = before.damaged();
             if (before.loaded() == loaded && before.empty() == empty && before.damaged() == damaged) return null;
@@ -973,7 +974,7 @@ final class DataStore {
     // ---------------------------------------------------------------- suppliers and refills
 
     List<Supplier> suppliers() {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             List<Supplier> out = new ArrayList<>();
             for (String[] r : suppliers.rows()) {
                 List<String> brands = Arrays.stream(col(r, 3).split(";")).map(String::trim).filter(b -> !b.isEmpty()).toList();
@@ -992,7 +993,7 @@ final class DataStore {
     }
 
     Supplier saveSupplier(String id, String name, String contact, List<String> brands, String note) {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             String[] row = {id, name, contact, String.join("; ", brands), note};
             if (id == null) {
                 List<String[]> rows = suppliers.copy();
@@ -1008,7 +1009,7 @@ final class DataStore {
 
     /** Returns why the supplier can't be deleted, or null once deleted. */
     String deleteSupplier(String id) {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             if (supplier(id) == null) return "Supplier not found";
             if (hasTanksOut(id)) return "Tanks are still at this refiller. Receive them first.";
             suppliers.remove(id);
@@ -1018,14 +1019,14 @@ final class DataStore {
 
     /** True when some tanks sent to this supplier haven't come back yet. */
     boolean hasTanksOut(String supplierId) {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             return refills().stream().anyMatch(r -> r.supplierId().equals(supplierId)
                     && refillItems(r.id()).stream().anyMatch(i -> i.outstanding() > 0));
         }
     }
 
     List<Refill> refills() {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             List<Refill> out = new ArrayList<>();
             for (String[] r : refills.rows()) {
                 out.add(new Refill(col(r, 0), col(r, 1), parseTime(col(r, 1)), col(r, 2), col(r, 3), col(r, 4), "1".equals(col(r, 5))));
@@ -1058,7 +1059,7 @@ final class DataStore {
 
     /** Sends good empty tanks to a refiller: they leave the store and wait as "at refiller". */
     Refill sendToRefiller(Supplier s, Map<Product, Integer> items, String staff, String note) {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             Map<String, Stock> stock = stock();
             for (var e : items.entrySet()) {
                 int empty = stock.getOrDefault(e.getKey().id(), Stock.NONE).empty();
@@ -1082,7 +1083,7 @@ final class DataStore {
     /** Returns the first stock change it recorded (undoing it undoes this whole receiving). */
     Movement receiveFromRefiller(Refill refill, Map<Product, int[]> items, Map<Product, Double> costs, Paid paid,
                                  String staff, String note) {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             Map<String, RefillItem> open = new HashMap<>();
             for (RefillItem i : refillItems(refill.id())) open.put(i.productId(), i);
             double added = 0;
@@ -1116,7 +1117,7 @@ final class DataStore {
      * sent and received at once, at costs[product] each, with what was paid. Needs that many good empties.
      */
     Refill recordRefill(Supplier s, Map<Product, Integer> items, Map<Product, Double> costs, Paid paid, String staff, String note) {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             Map<String, Stock> stock = stock();
             double bill = 0;
             for (var e : items.entrySet()) {
@@ -1149,7 +1150,7 @@ final class DataStore {
 
     /** Pays (part of) what a refill trip still owes. */
     SupplierPayment payRefiller(Refill refill, Paid paid, String staff, String note) {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             double owed = round(refillCost(refill.id()) - refillPaid(refill.id()));
             if (owed <= 0) throw new Conflict("Nothing is owed on this trip.");
             if (paid.total() <= 0) throw new Conflict("Enter how much was paid.");
@@ -1160,7 +1161,7 @@ final class DataStore {
 
     /** New tanks with load bought from the brand's supplier; what's paid now can be less than the bill (pay later). */
     Movement purchase(Product p, int qty, double unitCost, Paid paid, String staff, String note) {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             double bill = round(qty * unitCost);
             if (paid.total() > bill + 0.005) throw new Conflict("That's more than the ₱" + money(bill) + " these tanks cost.");
             Supplier s = supplierFor(p.brand());
@@ -1188,7 +1189,7 @@ final class DataStore {
      * recorded before 3.0 (no bill key) settle that supplier's oldest purchases.
      */
     List<Bill> bills() {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             Map<String, Product> prods = productMap();
             List<SupplierPayment> pays = supplierPayments();
             Map<String, Double> paidByKey = new HashMap<>();
@@ -1235,7 +1236,7 @@ final class DataStore {
 
     /** Pays a supplier, settling their oldest unpaid bills first (sales money first, then the owner's, then staff money). */
     List<SupplierPayment> paySupplier(Supplier s, Paid paid, String staff, String note) {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             List<Bill> owing = bills().stream().filter(b -> b.supplierId().equals(s.id()) && b.owed() > 0).toList();
             double owed = round(owing.stream().mapToDouble(Bill::owed).sum());
             if (owed <= 0) throw new Conflict("Nothing is owed to " + s.name() + ".");
@@ -1260,7 +1261,7 @@ final class DataStore {
     }
 
     List<SupplierPayment> supplierPayments() {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             List<SupplierPayment> out = new ArrayList<>();
             for (String[] r : supplierPayments.rows()) {
                 out.add(new SupplierPayment(col(r, 0), col(r, 1), parseTime(col(r, 1)), col(r, 2), col(r, 3), col(r, 4),
@@ -1284,7 +1285,7 @@ final class DataStore {
     // ---------------------------------------------------------------- staff money
 
     List<Payback> paybacks() {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             List<Payback> out = new ArrayList<>();
             for (String[] r : paybacks.rows()) {
                 out.add(new Payback(col(r, 0), col(r, 1), parseTime(col(r, 1)), col(r, 2), num(col(r, 3), 0), col(r, 4), col(r, 5)));
@@ -1295,7 +1296,7 @@ final class DataStore {
 
     /** What the store still owes each staff member who paid suppliers from their own pocket. */
     Map<String, Double> owedToStaff() {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             Map<String, Double> owed = new TreeMap<>();
             for (SupplierPayment sp : supplierPayments()) if (sp.fromStaff()) owed.merge(sp.paidBy(), sp.amount(), Double::sum);
             for (Payback p : paybacks()) owed.merge(p.staff(), -p.amount(), Double::sum);
@@ -1306,7 +1307,7 @@ final class DataStore {
 
     /** Records the store paying a staff member back (from sales money). */
     Payback payBackStaff(String staffName, double amount, String recordedBy, String note) {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             double owed = owedToStaff().getOrDefault(staffName, 0.0);
             if (owed <= 0) throw new Conflict("Nothing is owed to " + staffName + ".");
             if (amount > owed + 0.005) throw new Conflict("That's more than the ₱" + money(owed) + " owed to " + staffName + ".");
@@ -1322,7 +1323,7 @@ final class DataStore {
     // ---------------------------------------------------------------- expenses
 
     List<Expense> expenses() {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             List<Expense> out = new ArrayList<>();
             for (String[] r : expenses.rows()) {
                 out.add(new Expense(col(r, 0), col(r, 1), parseTime(col(r, 1)), col(r, 2), num(col(r, 3), 0), col(r, 4),
@@ -1335,7 +1336,7 @@ final class DataStore {
 
     /** Salary advances not yet taken off a salary, per employee. */
     Map<String, Double> advancesOwed() {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             Map<String, Double> owed = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
             Opening o = opening();
             if (o != null) o.advances().forEach((k, v) -> owed.merge(k, v, Double::sum));
@@ -1356,7 +1357,7 @@ final class DataStore {
      */
     Expense addExpense(String category, double amount, String employee, String method, String recordedBy, String note, double advanceDeducted,
                        LocalDate payday) {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             if (!EXPENSE_CATEGORIES.contains(category)) throw new Conflict("Choose what the expense was for.");
             boolean forEmployee = PAYROLL.contains(category);
             String who = forEmployee ? employee.trim() : "";
@@ -1393,7 +1394,7 @@ final class DataStore {
      */
     Expense updateExpense(String id, String category, double amount, String employee, String method, String note,
                           double advanceDeducted, LocalDate day) {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             Expense old = expenses().stream().filter(x -> x.id().equals(id)).findFirst().orElse(null);
             if (old == null) return null;
             if (!EXPENSE_CATEGORIES.contains(category)) throw new Conflict("Choose what the expense was for.");
@@ -1430,7 +1431,7 @@ final class DataStore {
     // ---------------------------------------------------------------- payroll
 
     List<Employee> employees() {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             List<Employee> out = new ArrayList<>();
             for (String[] r : employees.rows()) {
                 if (col(r, 1).isBlank()) continue;
@@ -1455,7 +1456,7 @@ final class DataStore {
      * entered wrong, so it counts for every pay day (the earlier salaries are forgotten).
      */
     Employee saveEmployee(String id, String name, double salary, String schedule, int day1, int day2, String note, boolean allPaydays) {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             name = name == null ? "" : name.trim();
             if (name.isEmpty()) throw new Conflict("Enter the employee's name.");
             schedule = schedule(schedule);
@@ -1509,7 +1510,7 @@ final class DataStore {
 
     /** Takes someone off the payroll list. Their salary and advance records stay; refused while they owe advances. */
     Employee deleteEmployee(String id) {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             Employee e = employees().stream().filter(x -> x.id().equals(id)).findFirst().orElse(null);
             if (e == null) return null;
             double owed = advancesOwed().getOrDefault(e.name(), 0.0);
@@ -1631,7 +1632,7 @@ final class DataStore {
      * recent pay days with the salaries that paid them, and their salary / advance / paid-back records, newest first.
      */
     Map<String, Object> payroll(LocalDate today) {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             Map<String, Double> owed = advancesOwed();
             Map<String, List<Object>> history = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
             Map<String, String> lastPaid = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
@@ -1700,7 +1701,7 @@ final class DataStore {
 
     /** Generic and other-brand empties taken in (on sales and tank returns), per tank size and brand, most first. */
     List<Object> looseEmpties() {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             Map<String, Product> prods = productMap();
             Map<String, Object[]> by = new TreeMap<>(String.CASE_INSENSITIVE_ORDER);
             java.util.function.BiConsumer<String[], Integer> add = (k, n) -> {
@@ -1721,7 +1722,7 @@ final class DataStore {
 
     /** Deletes an expense entered by mistake; returns it, or null when not found. */
     Expense deleteExpense(String id) {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             Expense e = expenses().stream().filter(x -> x.id().equals(id)).findFirst().orElse(null);
             if (e == null) return null;
             if ("advance".equals(e.category()) && advancesOwed().getOrDefault(e.employee(), 0.0) < e.amount() - 0.005) {
@@ -1739,7 +1740,7 @@ final class DataStore {
 
     /** The starting balances, or null before they're entered. */
     Opening opening() {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             List<String[]> rows = openings.rows();
             String[] head = rows.stream().filter(r -> "start".equals(col(r, 2))).findFirst().orElse(null);
             if (head == null) return null;
@@ -1783,7 +1784,7 @@ final class DataStore {
 
     /** What's still unpaid of each customer's starting balance. */
     Map<String, Double> openingOwed() {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             Opening o = opening();
             if (o == null) return Map.of();
             Map<String, Double> left = new LinkedHashMap<>(o.customerMoney());
@@ -1808,7 +1809,7 @@ final class DataStore {
      * the start, or less than what has since been paid, sold, given back or received.
      */
     void saveOpening(Opening o, String staff) {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             LocalDateTime first = firstRecord();
             if (first != null && first.toLocalDate().isBefore(o.start())) {
                 throw new Conflict("Records go back to " + first.toLocalDate() + ". The start date can't be after that.");
@@ -1922,7 +1923,7 @@ final class DataStore {
 
     /** When the earliest record (other than the starting balances) was made, or null when there are none. */
     LocalDateTime firstRecord() {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             List<LocalDateTime> times = new ArrayList<>();
             receipts().forEach(r -> times.add(r.time()));
             payments().forEach(p -> times.add(p.time()));
@@ -1940,7 +1941,7 @@ final class DataStore {
     // ---------------------------------------------------------------- customers' tanks kept at the store
 
     List<Deposit> deposits() {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             List<Deposit> out = new ArrayList<>();
             for (String[] r : deposits.rows()) {
                 out.add(new Deposit(col(r, 0), col(r, 1), parseTime(col(r, 1)), col(r, 2), col(r, 3), (int) Math.max(1, num(col(r, 4), 1)),
@@ -1959,7 +1960,7 @@ final class DataStore {
     }
 
     private Map<String, Map<String, Integer>> depositsHeldRaw() {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             Map<String, Map<String, Integer>> out = new LinkedHashMap<>();
             Opening o = opening();
             if (o != null) o.deposits().forEach((cid, m) -> m.forEach((pid, n) -> out.computeIfAbsent(cid, k -> new LinkedHashMap<>()).merge(pid, n, Integer::sum)));
@@ -1972,7 +1973,7 @@ final class DataStore {
 
     /** A customer leaves their own tanks with the store (kind "in"), or takes them back ("back"). */
     Deposit addDeposit(Customer c, Product p, int qty, String kind, String staff, String note) {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             if (!kind.equals("in") && !kind.equals("back")) throw new Conflict("Choose whether the tank is left or given back.");
             if (kind.equals("back")) {
                 int held = depositsHeld().getOrDefault(c.id(), Map.of()).getOrDefault(p.id(), 0);
@@ -2000,7 +2001,7 @@ final class DataStore {
      * kind: one of UNDO_KINDS; id: the record's id (a trip id for "refill"; any of the trip's receive movements for "receive").
      */
     Undone undoTarget(String kind, String id) {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             String[] row = switch (kind) {
                 case "refill" -> find(refills, id);
                 case "receive", "movement" -> find(movements, id);
@@ -2036,7 +2037,7 @@ final class DataStore {
 
     /** check false: leave checking that the records add up to the caller (an edit checks once the new record is in). */
     private Undone undo(String kind, String id, boolean check) {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             Map<Table, List<String[]>> before = new LinkedHashMap<>();
             for (Table t : List.of(refills, movements, payments, tankReturns, deposits, supplierPayments, paybacks)) before.put(t, t.copy());
             String problemBefore = undoProblem();
@@ -2169,7 +2170,7 @@ final class DataStore {
      * create is refused, or the records no longer add up afterwards, everything is put back as it was.
      */
     <T> T replacing(String kind, String id, java.util.concurrent.Callable<T> create) throws Exception {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             if (undoTarget(kind, id) == null) throw new Conflict("That record is no longer there. Someone may have undone or changed it already.");
             Map<Table, List<String[]>> before = new LinkedHashMap<>();
             for (Table t : all) if (t != users) before.put(t, t.copy());
@@ -2235,7 +2236,7 @@ final class DataStore {
     // ---------------------------------------------------------------- web users
 
     List<User> users() {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             List<User> out = new ArrayList<>();
             for (String[] r : users.rows()) out.add(new User(col(r, 0), col(r, 1), col(r, 2), col(r, 3), "1".equals(col(r, 4))));
             return out;
@@ -2247,7 +2248,7 @@ final class DataStore {
     }
 
     boolean addUser(String username, String salt, String hash) {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             if (user(username) != null) return false;
             List<String[]> rows = users.copy();
             rows.add(new String[]{username, salt, hash, now(), ""});
@@ -2257,7 +2258,7 @@ final class DataStore {
     }
 
     boolean setPassword(String username, String salt, String hash) {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             User u = user(username);
             return u != null && users.replace(username, new String[]{username, salt, hash, u.created(), u.dashboard() ? "1" : ""});
         }
@@ -2265,14 +2266,14 @@ final class DataStore {
 
     /** Lets a staff member see (or stops them seeing) the summary dashboard in the POS. */
     boolean setDashboard(String username, boolean on) {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             User u = user(username);
             return u != null && users.replace(username, new String[]{username, u.salt(), u.hash(), u.created(), on ? "1" : ""});
         }
     }
 
     boolean deleteUser(String username) {
-        synchronized (lock) {
+        try (Tx.Hold txHold = lock.hold()) {
             return users.remove(username);
         }
     }
@@ -2419,14 +2420,144 @@ final class DataStore {
 
         void save(List<String[]> next) {
             try {
+                lock.journal(this);
                 Path tmp = dir.resolve("." + path.getFileName() + ".web.tmp");
-                Files.writeString(tmp, Csv.format(next), StandardCharsets.UTF_8);
+                writeSynced(tmp, Csv.format(next).getBytes(StandardCharsets.UTF_8));
                 Files.move(tmp, path, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
                 rows = next;
                 mtime = Files.getLastModifiedTime(path);
                 size = Files.size(path);
             } catch (IOException e) {
+                lock.failed();
                 throw new UncheckedIOException(e);
+            }
+        }
+
+        /** Forgets what was read, so the next read comes from the file. */
+        void reload() {
+            mtime = null;
+            size = -1;
+        }
+    }
+
+    private static void writeSynced(Path file, byte[] bytes) throws IOException {
+        try (java.nio.channels.FileChannel ch = java.nio.channels.FileChannel.open(file, StandardOpenOption.CREATE, StandardOpenOption.WRITE,
+                StandardOpenOption.TRUNCATE_EXISTING)) {
+            java.nio.ByteBuffer buf = java.nio.ByteBuffer.wrap(bytes);
+            while (buf.hasRemaining()) ch.write(buf);
+            ch.force(true);
+        }
+    }
+
+    /** Runs work while holding the store lock (no change can land half-way through, e.g. while a backup copies the folder). */
+    void locked(Runnable work) {
+        try (Tx.Hold txHold = lock.hold()) {
+            work.run();
+        }
+    }
+
+    /**
+     * The store lock, and a rollback journal that makes a change touching several files all-or-nothing. Before a file is
+     * first rewritten in a change, its old contents go to .journal/ and its name to .journal/files; when the outermost
+     * hold ends the journal is dropped (that is the commit). If the server stops half-way (crash, power cut), the next
+     * start puts every file named in .journal/files back as it was, so a sale is never left without its items or a
+     * payment without its receipt. A failed write in a change rolls the whole change back at once.
+     */
+    private final class Tx {
+        interface Hold extends AutoCloseable {
+            @Override
+            void close();
+        }
+
+        private final java.util.concurrent.locks.ReentrantLock mutex = new java.util.concurrent.locks.ReentrantLock();
+        private final Set<Table> journaled = new LinkedHashSet<>();
+        private boolean failed;
+
+        Hold hold() {
+            mutex.lock();
+            return this::release;
+        }
+
+        private Path journalDir() { return dir.resolve(".journal"); }
+
+        /** Called before a table's file is rewritten. */
+        void journal(Table t) throws IOException {
+            if (!mutex.isHeldByCurrentThread() || journaled.contains(t)) return;
+            Path j = journalDir();
+            Files.createDirectories(j);
+            String name = t.path.getFileName().toString();
+            String entry;
+            if (Files.exists(t.path)) {
+                writeSynced(j.resolve(name), Files.readAllBytes(t.path));
+                entry = name;
+            } else {
+                entry = "-" + name; // didn't exist before: removed on rollback
+            }
+            Files.writeString(j.resolve("files"), entry + "\n", StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND,
+                    StandardOpenOption.SYNC);
+            journaled.add(t);
+        }
+
+        void failed() {
+            if (mutex.isHeldByCurrentThread()) failed = true;
+        }
+
+        private void release() {
+            try {
+                if (mutex.getHoldCount() == 1 && !journaled.isEmpty()) {
+                    if (failed) {
+                        System.err.println("  " + dir.getFileName() + ": a save failed half-way; putting the files back as they were");
+                        rollback();
+                    }
+                    drop();
+                }
+            } catch (IOException e) {
+                throw new UncheckedIOException(e);
+            } finally {
+                if (mutex.getHoldCount() == 1) {
+                    journaled.clear();
+                    failed = false;
+                }
+                mutex.unlock();
+            }
+        }
+
+        /** At start-up: undoes a change the server didn't finish. */
+        void recover() throws IOException {
+            if (!Files.exists(journalDir().resolve("files"))) {
+                if (Files.isDirectory(journalDir())) drop();
+                return;
+            }
+            System.err.println("  " + dir.getFileName() + ": the last change wasn't finished (the server stopped); putting its files back as they were");
+            rollback();
+            drop();
+        }
+
+        private void rollback() throws IOException {
+            Path j = journalDir();
+            for (String entry : Files.readAllLines(j.resolve("files"), StandardCharsets.UTF_8)) {
+                if (entry.isBlank()) continue;
+                boolean absent = entry.startsWith("-");
+                String name = absent ? entry.substring(1) : entry;
+                if (name.contains("/") || name.contains("\\") || name.startsWith(".")) continue;
+                Path target = dir.resolve(name);
+                if (absent) {
+                    Files.deleteIfExists(target);
+                } else if (Files.exists(j.resolve(name))) {
+                    Path tmp = dir.resolve("." + name + ".web.tmp");
+                    writeSynced(tmp, Files.readAllBytes(j.resolve(name)));
+                    Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+                }
+            }
+            for (Table t : all) t.reload();
+        }
+
+        /** Commit: the list of files goes first, so a crash from here on keeps the change. */
+        private void drop() throws IOException {
+            Path j = journalDir();
+            Files.deleteIfExists(j.resolve("files"));
+            try (java.util.stream.Stream<Path> s = Files.list(j)) {
+                for (Path p : s.toList()) Files.deleteIfExists(p);
             }
         }
     }

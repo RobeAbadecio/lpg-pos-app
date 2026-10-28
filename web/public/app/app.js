@@ -9,7 +9,9 @@
   // laterPaid: payments recorded after the sale on the receipt being edited.
   // lastCustomerId: who the items were added for, so switching customers starts a fresh receipt.
   // date: the day the receipt is for ('' = today); when editing, the receipt's own day, which can be changed.
-  const newSale = () => ({ customerId: null, lastCustomerId: null, lines: [], discount: '', pay: 'full', method: 'cash', paidNow: '', cash: '', note: '', date: '', editing: null, own: {}, laterPaid: 0, fromKept: false });
+  // Sent with each new sale and payment, so one sent twice (dropped signal, second tap) is saved only once.
+  const requestId = () => Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(16).padStart(2, '0')).join('');
+  const newSale = () => ({ requestId: requestId(), customerId: null, lastCustomerId: null, lines: [], discount: '', pay: 'full', method: 'cash', paidNow: '', cash: '', note: '', date: '', editing: null, own: {}, laterPaid: 0, fromKept: false });
   const state = { me: null, data: EMPTY_DATA, etag: null, view: 'sell', sale: newSale(), historyFilter: 'all', customerFilter: 'all', sizeFilter: '', invTab: 'stock', dashMode: 'daily' };
   try {
     const m = localStorage.getItem('lpg-dash-mode');
@@ -223,8 +225,12 @@
   }
 
   // The Dashboard tab shows only for staff the admin has allowed to see it.
+  // The owner and staff with dashboard access: prices, write-offs, deletes and other people's sales (the server checks too).
+  const manager = () => !!(state.me && state.me.dashboard);
+
   function updateDashboardAccess() {
-    for (const t of document.querySelectorAll('.tab[data-view="dashboard"]')) t.hidden = !(state.me && state.me.dashboard);
+    for (const t of document.querySelectorAll('.tab[data-view="dashboard"]')) t.hidden = !manager();
+    for (const id of ['add-product', 'stock-adjust']) if ($(id)) $(id).hidden = !manager();
   }
 
   $('login-form').addEventListener('submit', async (e) => {
@@ -849,6 +855,7 @@
       customerId: sale.customerId, discount: t.discount, paid: t.paid, payMethod: sale.method, note: $('cart-note').value.trim(), items: sale.lines.length,
     };
     if (sale.fromKept && !sale.editing) body.fromKept = '1';
+    if (!sale.editing) body.requestId = sale.requestId;
     const day = $('sale-date').value;
     // A new sale for another day sends recordDate; an edited receipt sends its (possibly changed) date.
     if (!$('sale-date-field').hidden && day) {
@@ -1025,8 +1032,8 @@
       cancel: 'Close',
       body: receiptView(rc, true),
       actions: (close) => [
-        h('button', { type: 'button', class: 'btn danger', onclick: () => { close(); voidReceipt(rc); } }, 'Void'),
-        h('button', { type: 'button', class: 'btn', onclick: () => { close(); editReceipt(rc); } }, 'Edit'),
+        canUndo(rc.staff, rc.time) ? h('button', { type: 'button', class: 'btn danger', onclick: () => { close(); voidReceipt(rc); } }, 'Void') : null,
+        canUndo(rc.staff, rc.time) ? h('button', { type: 'button', class: 'btn', onclick: () => { close(); editReceipt(rc); } }, 'Edit') : null,
         h('button', { type: 'button', class: 'btn', onclick: () => printReceipt(rc) }, 'Print'),
         cust && cust.tanksOwed > 0 ? h('button', { type: 'button', class: 'btn', onclick: () => { close(); returnDialog(cust); } }, 'Collect tank') : null,
         rc.balance > 0 ? h('button', { type: 'button', class: 'btn primary', onclick: () => { close(); paymentDialog({ receipt: rc }); } }, 'Record payment') : null,
@@ -1069,6 +1076,7 @@
   function paymentDialog({ customer, receipt, edit }) {
     const owed = round2((receipt ? receipt.balance : customer.balance) + (edit ? edit.amount : 0));
     const who = receipt ? receipt.customer : fullName(customer);
+    const reqId = requestId();
     return formDialog({
       title: editTitle(edit, receipt ? `Payment for receipt #${receipt.id}` : `Collect payment from ${who}`),
       message: receipt ? `${who} owes ${peso.format(owed)} on this receipt${edit ? ' without this payment' : ''}.`
@@ -1080,7 +1088,7 @@
         { name: 'note', label: 'Note (optional)', full: true, placeholder: 'e.g. GCash reference number', value: edit ? edit.note : null },
       ],
       extra: (inputs) => dateField(inputs, edit),
-      onSubmit: (v) => mutate('POST', '/api/payments', asEdit({ ...v, customerId: customer ? customer.id : '', receiptId: receipt ? receipt.id : '' }, edit),
+      onSubmit: (v) => mutate('POST', '/api/payments', asEdit({ ...v, customerId: customer ? customer.id : '', receiptId: receipt ? receipt.id : '', ...(edit ? {} : { requestId: reqId }) }, edit),
         edit ? 'Payment corrected' : `Payment of ${peso.format(Number(v.amount))} recorded`),
     });
   }
@@ -1121,9 +1129,9 @@
           { label: 'View receipt', onClick: () => showReceipt(r.id) },
           r.balance > 0 ? { label: 'Record payment', onClick: () => paymentDialog({ receipt: r }) } : null,
           cust && cust.tanksOwed > 0 ? { label: 'Collect tank', onClick: () => returnDialog(cust) } : null,
-          { label: 'Edit receipt', onClick: () => editReceipt(r) },
+          canUndo(r.staff, r.time) ? { label: 'Edit receipt', onClick: () => editReceipt(r) } : null,
           { label: 'Print', onClick: () => printReceipt(r) },
-          { label: 'Void receipt…', danger: true, onClick: () => voidReceipt(r) },
+          canUndo(r.staff, r.time) ? { label: 'Void receipt…', danger: true, onClick: () => voidReceipt(r) } : null,
         ], `receipt #${r.id}`);
       } },
     ], shown, q || filtered ? 'No receipts match.' : 'No receipts yet.',
@@ -1180,7 +1188,7 @@
           { label: 'Kept tanks', onClick: () => keptDialog(c) },
           { label: 'Edit customer', onClick: () => customerDialog(c) },
           { label: 'Start a sale', onClick: () => saleFor(c) },
-          { label: 'Delete customer…', danger: true, onClick: () => deleteCustomer(c) },
+          manager() ? { label: 'Delete customer…', danger: true, onClick: () => deleteCustomer(c) } : null,
         ], fullName(c)) },
     ], rows, q || state.customerFilter !== 'all' ? 'No customers match.' : 'No customers yet.',
     (c) => [c.contact, lastText(c), c.tanksOwed ? `owes ${plural(c.tanksOwed, 'tank')}` : null, c.keptTanks ? `we keep ${plural(c.keptTanks, 'tank')}` : null].filter(Boolean).join(' · ')));
@@ -1309,11 +1317,11 @@
       { label: 'Sold', right: true, render: (p) => count.format(p.sold), sm: 'hide' },
       { label: 'With load', right: true, render: (p) => count.format(p.loaded), sm: 'hide' },
       { label: 'Status', render: (p) => stockPill(p), sm: 'hide' },
-      { label: 'Actions', right: true, cls: 'actions', render: (p) => rowMenu({ label: 'Edit', onClick: () => productDialog(p) }, [
+      { label: 'Actions', right: true, cls: 'actions', render: (p) => manager() ? rowMenu({ label: 'Edit', onClick: () => productDialog(p) }, [
         { label: 'Edit product', onClick: () => productDialog(p) },
         { label: 'Count stock', onClick: () => adjustDialog(p) },
         { label: 'Delete product…', danger: true, onClick: () => deleteProduct(p) },
-      ], p.label) },
+      ], p.label) : null },
     ], all, 'No LPG products yet.',
     (p) => `${kg(p.weight)} · swap fee ${p.swapFee ? peso.format(p.swapFee) : 'none'} · refill cost ${p.refillCost ? peso.format(p.refillCost) : 'not set'} · ${count.format(p.sold)} sold · ${stockText(p)}`));
   }
@@ -1531,12 +1539,13 @@
   // Pay when something is owed, else History (dashboard staff) or Edit; the rest in the ⋯ menu.
   function supplierActions(s) {
     const history = state.me && state.me.dashboard ? { label: 'History', onClick: () => supplierHistoryDialog(s) } : null;
-    return rowMenu(s.owed > 0 ? { label: 'Pay', primary: true, onClick: () => paySupplierDialog(s) } : history || { label: 'Edit', onClick: () => supplierDialog(s) }, [
+    const edit = manager() ? { label: 'Edit', onClick: () => supplierDialog(s) } : { label: 'Send empties', onClick: () => sendRefillDialog(s.id) };
+    return rowMenu(s.owed > 0 ? { label: 'Pay', primary: true, onClick: () => paySupplierDialog(s) } : history || edit, [
       s.owed > 0 ? { label: 'Pay', onClick: () => paySupplierDialog(s) } : null,
       history,
       { label: 'Send empties', onClick: () => sendRefillDialog(s.id) },
-      { label: 'Edit supplier', onClick: () => supplierDialog(s) },
-      { label: 'Delete supplier…', danger: true, onClick: () => deleteSupplier(s) },
+      manager() ? { label: 'Edit supplier', onClick: () => supplierDialog(s) } : null,
+      manager() ? { label: 'Delete supplier…', danger: true, onClick: () => deleteSupplier(s) } : null,
     ], s.name);
   }
 

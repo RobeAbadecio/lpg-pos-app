@@ -4,6 +4,28 @@ Every update gets a new version number. It's shown in the POS (header, account m
 
 Numbering is `major.minor.patch`: **major** when the data or the way staff work changes a lot, **minor** for new features, **patch** for fixes and small changes.
 
+## 5.5.0 — 2026-10-28: safer for paying stores (pilot readiness)
+
+**Who can change what** (the server checks; the buttons are hidden for staff who can't)
+- Staff without dashboard access can still sell, take payments, add and edit customers, buy tanks, send and receive refills, and pay suppliers.
+- They can **void or edit only their own sales, and only in the first 30 minutes** (the same rule as Undo). Before, any staff member could void or edit any receipt of any day, which would let money from a sale disappear without the owner noticing.
+- **Prices and products** (add, edit, delete), **stock counts and write-offs**, **editing or deleting a supplier** and **deleting a customer** are now for the owner and staff with dashboard access only. Give a trusted staff member dashboard access on the Team page if they need these.
+
+**A sale or payment is never saved twice**
+- Each new sale and payment carries its own number. If the signal drops after the server saved it and the cashier taps again, the server answers with the first receipt instead of saving a second one (also when tapped many times at once).
+
+**A crash can't leave half a sale**
+- A change that writes several files (a sale: the receipt and its items) first keeps a copy of each file it changes in the store's `.journal` folder. If the server stops half-way (crash, power cut, full disk), the next start puts those files back, so nothing is half-saved. A write that fails puts them back at once.
+
+**Backups**
+- Each store's folder is copied while its records are not being written, so a backup never holds a sale without its items.
+- Fix: two backups in the same second (start-up and "Back up now") failed with "Directory not empty". The second one is now named `…-2`.
+
+**Other**
+- `/healthz` answers `{"ok":true}` when the server and its database work, for a free uptime monitor. It shows no store data.
+- Sign-in: wrong passwords from one connection no longer lock the account for everyone; the per-account limit is higher (24 in 15 minutes) and the per-connection limit stays at 8.
+- New test: `PilotCheck` (permissions, sent twice, two stores kept apart by id, crash and failed-write recovery, backups taken during sales, health link, sign-in limits).
+
 ## 5.4.0 — 2026-10-25: money check, and a (?) beside every important figure
 
 **Fix: raising (or cutting) a salary changed what was owed for pay days already past**
