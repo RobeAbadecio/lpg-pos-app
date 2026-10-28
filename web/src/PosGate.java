@@ -41,6 +41,12 @@ final class PosGate implements Http.Handler {
 
     @Override
     public void handle(Http.Req r) throws IOException {
+        if (r.path.equals("/healthz")) {
+            // For an uptime monitor: answers only when the server and its database work. Says nothing about any store.
+            platform.setting("last_backup");
+            r.json(200, Json.obj("ok", true));
+            return;
+        }
         if (!r.path.startsWith("/api/")) {
             Http.serveStatic(r, appRoot, sharedRoot);
             return;

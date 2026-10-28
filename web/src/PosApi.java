@@ -281,6 +281,7 @@ final class PosApi {
                 r.json(201, Json.obj("ok", true, "undo", undo("deposit", d.id())));
             }
             case "DELETE customers/:id" -> {
+                requireManager(who, "delete a customer");
                 int result = store.deleteCustomer(id);
                 if (result == -2) throw new Http.Error(409, "This customer is in the starting balances or has tanks kept at the store, so they can't be deleted.");
                 if (result < 0) throw new Http.Error(404, "Customer not found");
@@ -291,6 +292,7 @@ final class PosApi {
 
             // ---- products
             case "POST products" -> {
+                requireManager(who, "add LPG products");
                 ProductFields f = productFields(r);
                 int loaded = whole(r.param("openingLoaded"), "Tanks with load on hand", 0, 10_000);
                 int empty = whole(r.param("openingEmpty"), "Empty tanks on hand", 0, 10_000);
@@ -303,6 +305,7 @@ final class PosApi {
                 r.json(201, Json.obj("id", p.id()));
             }
             case "PUT products/:id" -> {
+                requireManager(who, "change prices and products");
                 ProductFields f = productFields(r);
                 DataStore.Product old = store.product(id);
                 if (old == null || !store.updateProduct(f.toProduct(id, old.tankPrice()))) throw new Http.Error(404, "Product not found");
@@ -312,6 +315,7 @@ final class PosApi {
                 r.json(200, Json.obj("ok", true));
             }
             case "DELETE products/:id" -> {
+                requireManager(who, "delete a product");
                 String why = store.deleteProduct(id);
                 if (why != null) throw new Http.Error(why.equals("Product not found") ? 404 : 409, why);
                 log.add(who, ip, "Deleted product #" + id);
@@ -319,18 +323,19 @@ final class PosApi {
             }
 
             // ---- receipts and payments
-            case "POST receipts" -> {
+            case "POST receipts" -> once(r, who, () -> {
                 ReceiptFields f = receiptFields(r);
                 boolean fromKept = "1".equals(r.param("fromKept"));
                 DataStore.Receipt rc = store.createReceipt(f.customer.id(), who, f.items, f.discount, f.paid, f.note, f.payMethod, fromKept);
                 log.add(who, ip, "Receipt #" + rc.id() + " for " + f.customer.name() + ": " + describe(rc) + paymentText(rc, f.paid)
                         + (fromKept ? "; empties from the customer's tanks kept at the store" : ""));
-                r.json(201, Json.obj("id", rc.id(), "total", rc.total()));
-            }
+                return Json.obj("id", rc.id(), "total", rc.total());
+            });
             case "PUT receipts/:id" -> {
                 ReceiptFields f = receiptFields(r);
                 DataStore.Receipt before = store.receipt(id);
                 if (before == null) throw new Http.Error(404, "Receipt not found");
+                mayChangeReceipt(before, who, "change");
                 LocalDate day = newDate(r, who, before.time());
                 DataStore.Receipt rc = store.updateReceipt(id, f.customer.id(), f.items, f.discount, f.paid, f.note, f.payMethod, day);
                 if (rc == null) throw new Http.Error(404, "Receipt not found");
@@ -339,12 +344,15 @@ final class PosApi {
                 r.json(200, Json.obj("id", rc.id(), "total", rc.total()));
             }
             case "DELETE receipts/:id" -> {
+                DataStore.Receipt before = store.receipt(id);
+                if (before == null) throw new Http.Error(404, "Receipt not found");
+                mayChangeReceipt(before, who, "void");
                 DataStore.Receipt rc = store.voidReceipt(id);
                 if (rc == null) throw new Http.Error(404, "Receipt not found");
                 log.add(who, ip, "Voided receipt #" + id + " (" + describe(rc) + ", ₱" + DataStore.money(rc.total()) + ")");
                 r.json(200, Json.obj("ok", true));
             }
-            case "POST payments" -> {
+            case "POST payments" -> once(r, who, () -> {
                 String receiptId = r.param("receiptId").isEmpty() ? null : r.param("receiptId");
                 String customerId = r.param("customerId");
                 if (receiptId != null) {
@@ -359,14 +367,18 @@ final class PosApi {
                 List<DataStore.Payment> parts = store.addPayment(c.id(), receiptId, DataStore.round(amount), who, limit(r.param("note"), 120, "Note"), method);
                 log.add(who, ip, "Payment ₱" + DataStore.money(amount) + (method.equals("gcash") ? " by GCash" : "") + " from " + c.name() + " for "
                         + parts.stream().map(x -> x.receiptId().startsWith("O") ? "the starting balance" : "receipt #" + x.receiptId()).collect(Collectors.joining(", ")));
-                r.json(201, Json.obj("ok", true, "undo", undo("payment", parts.get(0).id())));
-            }
+                return Json.obj("ok", true, "undo", undo("payment", parts.get(0).id()));
+            });
 
             // ---- stock
             case "POST stock/:id" -> stockChange(r, who, ip, id);
             case "POST suppliers" -> saveSupplier(r, who, ip, null);
-            case "PUT suppliers/:id" -> saveSupplier(r, who, ip, id);
+            case "PUT suppliers/:id" -> {
+                requireManager(who, "change a supplier");
+                saveSupplier(r, who, ip, id);
+            }
             case "DELETE suppliers/:id" -> {
+                requireManager(who, "delete a supplier");
                 DataStore.Supplier sup = store.supplier(id);
                 String why = store.deleteSupplier(id);
                 if (why != null) throw new Http.Error(why.equals("Supplier not found") ? 404 : 409, why);
@@ -506,6 +518,7 @@ final class PosApi {
                         + (cost > 0 ? " for ₱" + DataStore.money(bill) + (paid.total() < bill - 0.005 ? " (paid ₱" + DataStore.money(paid.total()) + ", rest later)" : "") + paidText(paid) : "") + suffix);
             }
             case "adjust" -> {
+                requireManager(who, "count, adjust or write off stock");
                 int loaded = whole(r.param("loaded"), "Tanks with load", 0, 10_000);
                 int empty = whole(r.param("empty"), "Empty tanks", 0, 10_000);
                 Integer damaged = r.param("damaged").isEmpty() ? null : whole(r.param("damaged"), "Damaged tanks", 0, 10_000);
@@ -757,6 +770,56 @@ final class PosApi {
         DataStore.Product p = store.product(productId);
         String size = p == null ? "" : " " + DataStore.fmtKg(p.weight()) + " kg";
         return "generic".equals(kind) ? "Generic" + size : DataStore.looseLabel(kind, brand) + " (other brand)" + size;
+    }
+
+    /** Changes that move money or stock without a sale (prices, write-offs, deletes): staff with dashboard access only. */
+    private void requireManager(String who, String what) {
+        DataStore.User u = store.user(who);
+        if (u == null || !u.dashboard()) throw new Http.Error(403, "Only the owner or staff with dashboard access can " + what + ".");
+    }
+
+    /** A receipt: staff with dashboard access may change or void any; other staff, their own from the last UNDO_MINUTES. */
+    private void mayChangeReceipt(DataStore.Receipt rc, String who, String verb) {
+        DataStore.User u = store.user(who);
+        if (u != null && u.dashboard()) return;
+        if (!rc.staff().equals(who)) throw new Http.Error(403, (rc.staff().isEmpty() ? "Someone else" : rc.staff()) + " made this sale. Ask the owner or someone with dashboard access to " + verb + " it.");
+        if (rc.time() == null || rc.time().isBefore(LocalDateTime.now().minusMinutes(UNDO_MINUTES))) {
+            throw new Http.Error(403, "This sale was made more than " + UNDO_MINUTES + " minutes ago. Ask the owner or someone with dashboard access to " + verb + " it.");
+        }
+    }
+
+    interface Work {
+        Map<String, Object> run() throws IOException;
+    }
+
+    /** Recent sales and payments by requestId, with the answer each got (oldest first). */
+    private final LinkedHashMap<String, Map<String, Object>> recent = new LinkedHashMap<>();
+    private static final int RECENT_MAX = 2000;
+
+    /**
+     * Saves a new sale or payment once per requestId (sent by the POS with each new one): the same request sent again,
+     * after a dropped connection or a second tap, gets the first answer back instead of being saved twice.
+     */
+    private void once(Http.Req r, String who, Work work) throws IOException {
+        String key = r.param("requestId");
+        if (key.isEmpty() || !r.param("replaceKind").isEmpty()) {
+            r.json(201, work.run());
+            return;
+        }
+        if (key.length() > 64) throw new Http.Error(400, "Bad request id");
+        String k = who + "\n" + key;
+        synchronized (recent) {
+            Map<String, Object> first = recent.get(k);
+            if (first != null) {
+                log.add(who, r.clientIp(), "Same request sent again (" + r.path + "); not saved twice");
+                r.json(201, first);
+                return;
+            }
+            Map<String, Object> out = work.run();
+            recent.put(k, out);
+            if (recent.size() > RECENT_MAX) recent.remove(recent.keySet().iterator().next());
+            r.json(201, out);
+        }
     }
 
     private void requireDashboard(String who) {
