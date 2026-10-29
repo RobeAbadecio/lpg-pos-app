@@ -12,7 +12,7 @@
   --axis: #c3c2b7;
   --border: #e4e3dc;
   --border-strong: #d4d3ca;
-  --accent: #2a78d6;
+  --accent: #2470cc;
   --accent-ink: #1c5cab;
   --accent-wash: #eaf2fc;
   --on-accent: #ffffff;
@@ -254,7 +254,8 @@ body { font-size: 15px; }
 .num, td.right, th.right { font-variant-numeric: tabular-nums; }
 .btn { min-height: 44px; border-color: var(--border-strong); border-radius: var(--radius-sm); font-weight: 550; }
 .btn.small { min-height: 36px; border-radius: 9px; }
-.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+@media (pointer: coarse) { .btn.small, summary.btn { min-height: 44px; } }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .btn.primary:hover { filter: brightness(0.92); }
 .btn.danger { color: var(--critical); }
 .btn.xl { min-height: 56px; font-size: 17px; font-weight: 650; border-radius: 12px; }
@@ -296,7 +297,7 @@ dialog.modal { border-radius: 16px; border-color: var(--border); }
 .modal form { display: block; padding: 0; }
 .modal-head { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 16px 8px 20px; background: var(--surface); }
 .modal-head h3 { font-size: 18px; font-weight: 700; }
-.modal-close { flex: none; width: 40px; height: 40px; border: 0; border-radius: 10px; background: transparent; color: var(--muted); font-size: 16px; cursor: pointer; }
+.modal-close { flex: none; width: 44px; height: 44px; border: 0; border-radius: 10px; background: transparent; color: var(--muted); font-size: 16px; cursor: pointer; }
 .modal-close:hover { background: var(--surface-2); color: var(--ink); }
 .modal-close:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; }
 .modal-body { display: grid; gap: 14px; padding: 4px 20px 20px; }

@@ -1472,7 +1472,7 @@
     if (loose.length) groups.push({ s: null, items: loose });
     const cols = 6;
     clear($('inventory-table'), products.length ? h('table', { class: 'rtable stock-table' },
-      h('thead', {}, h('tr', {}, ['Product', 'With load', 'Empty', 'At refiller', 'Status', ''].map((t, i) => h('th', { class: i && i < 4 ? 'right' : null }, t)))),
+      h('thead', {}, h('tr', {}, ['Product', 'With load', 'Empty', 'At refiller', 'Status', ''].map((t, i) => h('th', { class: i && i < 4 ? 'right' : null }, t || h('span', { class: 'sr-only' }, 'Actions'))))),
       h('tbody', {}, groups.flatMap((g) => [
         h('tr', { class: 'group-row' }, h('td', { colspan: cols },
           g.s ? [h('strong', {}, g.s.name), g.s.contact ? h('span', { class: 'muted' }, ` · ${g.s.contact}`) : null,

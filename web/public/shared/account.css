@@ -2,7 +2,7 @@
 body { margin: 0; background: var(--page); color: var(--ink); font-family: var(--font); }
 .acct-shell { max-width: 1040px; margin: 0 auto; padding: 20px 16px 48px; display: grid; gap: 16px; }
 .acct-top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.acct-top .title { font-weight: 650; font-size: 18px; }
+.acct-top .title { margin: 0; font-weight: 650; font-size: 18px; line-height: 1.3; }
 .acct-top .spacer { flex: 1; }
 .acct-narrow { width: min(460px, 100%); margin: 0 auto; }
 .acct-card { padding: 20px; display: grid; gap: 14px; }
@@ -76,3 +76,12 @@ body { margin: 0; background: var(--page); color: var(--ink); font-family: var(-
 .swatch input:checked + i { box-shadow: 0 0 0 3px var(--ink); }
 .swatch input:focus-visible + i { outline: 2px solid var(--accent); outline-offset: 4px; }
 .acct-top img.is-logo { width: 36px; height: 36px; object-fit: contain; border-radius: 8px; background: #fff; }
+
+/* 5.6: phones zoom into inputs under 16px; keep them at 16 */
+@media (max-width: 760px) { .input, .acct-table input, .acct-table select { font-size: 16px; } }
+/* 5.6: stacked phone rows say what each value is (Status, Dashboard) and the checkbox is a full-size target */
+@media (max-width: 640px) {
+  .acct-table.stack td[data-label] { display: flex; align-items: center; gap: 10px; min-height: 32px; }
+  .acct-table.stack td[data-label]::before { content: attr(data-label); min-width: 84px; color: var(--muted); font-size: 13px; }
+  .acct-table.stack td[data-label] input[type="checkbox"] { width: 24px; height: 24px; }
+}

@@ -4,6 +4,19 @@ Every update gets a new version number. It's shown in the POS (header, account m
 
 Numbering is `major.minor.patch`: **major** when the data or the way staff work changes a lot, **minor** for new features, **patch** for fixes and small changes.
 
+## 5.5.1 — 2026-10-29: UI check against common UX rules (Jakob, Fitts, Hick and accessibility)
+
+Look and layout only; no data or money changes.
+- **Readable buttons**: the blue main button was a bit too light for white text (4.4:1). It's a little darker now (4.9:1). In dark mode main buttons use dark text, so every store color is readable.
+- **Bigger touch targets on phones and tablets**: small buttons, the ⋯ menu, the dialog ✕, the + / − steppers and the (?) icons are all at least 44 px to tap.
+- **No zoom-in when typing on phones**: every input on phones uses 16 px text (iPhones zoom into smaller text).
+- **Dashboard tabs on phones**: one row you can swipe sideways, like the Inventory tabs, instead of a 3 × 2 block. A soft fade on the right shows there are more tabs.
+- **Daily summary on phones**: ‹ date › stays on one row; the date picker sits below at full width.
+- **Same word everywhere**: the phone bottom bar says "Inventory", like the side bar and the page title (it said "Stock").
+- **Team page on phones**: each staff row shows "Status" and "Dashboard" labels, and the dashboard checkbox is bigger.
+- **Screen readers**: every page has a main heading; empty table headings say "Actions"; the "By size" table can be scrolled with the keyboard; the cart side panel is no longer marked as a separate landmark.
+- Sign-up page: "Sign in" is a proper button.
+
 ## 5.5.0 — 2026-10-28: safer for paying stores (pilot readiness)
 
 **Who can change what** (the server checks; the buttons are hidden for staff who can't)
