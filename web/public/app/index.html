@@ -96,7 +96,7 @@
               <div id="sell-products" class="product-grid"></div>
             </div>
           </div>
-          <aside class="stack sell-side">
+          <div class="stack sell-side">
             <div class="card order">
               <div class="card-head"><h2><span class="step">3</span>Receipt</h2><span class="muted" id="cart-count"></span></div>
               <div id="cart-lines" class="cart-lines"></div>
@@ -141,7 +141,7 @@
               <div class="card-head"><h2>Latest receipts</h2><button class="btn small ghost" data-goto="history">See all</button></div>
               <div id="sell-recent"></div>
             </div>
-          </aside>
+          </div>
         </div>
       </section>
 
@@ -221,7 +221,7 @@
           </div>
           <div class="card">
             <div class="card-head"><div><h2>By size</h2><div class="sub">Tanks of each size, all brands</div></div></div>
-            <div class="table-wrap" id="size-totals"></div>
+            <div class="table-wrap" id="size-totals" tabindex="0" role="region" aria-label="Tanks by size"></div>
           </div>
           <div class="card">
             <div class="card-head"><div><h2>Generic &amp; other-brand empties</h2><div class="sub">Taken in on sales and tank returns. They aren’t in any brand’s stock and can’t go to a brand’s refiller.</div></div></div>
@@ -292,7 +292,7 @@
       <button class="tab" data-view="history"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2V3ZM9 8h6M9 12h6"/></svg>Receipts</button>
       <button class="tab" data-view="customers"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3"/><path d="M3 20v-2a6 6 0 0 1 12 0v2M16 5a3 3 0 0 1 0 6M18 14a5 5 0 0 1 3 4v2"/></svg>Customers</button>
       <button class="tab" data-view="products"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 9 5-9 5-9-5 9-5ZM3 8v9l9 5 9-5V8M12 13v9"/></svg>Products</button>
-      <button class="tab" data-view="inventory"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 3v18M20 3v18M4 10h16M4 18h16M7 4h4v6H7ZM13 12h4v6h-4Z"/></svg>Stock<span class="tab-alert" id="tab-alert-sm" hidden></span></button>
+      <button class="tab" data-view="inventory"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 3v18M20 3v18M4 10h16M4 18h16M7 4h4v6H7ZM13 12h4v6h-4Z"/></svg>Inventory<span class="tab-alert" id="tab-alert-sm" hidden></span></button>
       <button class="tab" data-view="dashboard" hidden><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10h4v10ZM10 20V4h4v16ZM16 20v-7h4v7Z"/></svg>Dashboard</button>
     </nav>
   </div>

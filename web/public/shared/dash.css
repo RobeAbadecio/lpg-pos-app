@@ -119,7 +119,7 @@
 }
 .explainable::after { content: '?'; margin-left: 6px; position: relative; top: -2px; }
 .help-q { margin-left: 4px; padding: 0; cursor: pointer; position: relative; }
-.help-q::before { content: ''; position: absolute; inset: -12px; } /* a bigger target for fingers */
+.help-q::before { content: ''; position: absolute; inset: -14px; } /* a bigger target for fingers */
 .help-q:hover, .explainable:hover::after { color: var(--accent-ink, var(--accent)); border-color: var(--accent); }
 .help-q:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .explain { display: grid; gap: 12px; }
@@ -156,3 +156,9 @@ dialog.modal.wide:has(.explain) { width: min(920px, calc(100vw - 32px)); }
 .day-block .owe-row { padding-left: 12px; }
 .day-block .owe-row strong, .day-block .owe-row .num { color: var(--ink); }
 .owe-row.plain strong { color: var(--ink); font-weight: 600; }
+
+/* 5.6: on phones ‹ day › stay on one row; the date picker and "Back to today" go below */
+@media (max-width: 640px) {
+  .day-title { flex: 1 1 calc(100% - 120px); justify-content: center; text-align: center; }
+  .day-pick { flex: 1 1 auto; min-height: 44px; font-size: 16px; }
+}

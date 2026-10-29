@@ -42,8 +42,8 @@
     return h('tr', {},
       h('td', {}, h('b', {}, a.username), a.online ? h('span', { class: 'muted' }, ' · online') : null),
       h('td', {}, a.fullName || '—'),
-      h('td', {}, h('span', { class: 'st st-' + a.status }, STATUS[a.status] || a.status)),
-      h('td', {}, dash),
+      h('td', { 'data-label': 'Status' }, h('span', { class: 'st st-' + a.status }, STATUS[a.status] || a.status)),
+      h('td', { 'data-label': 'Dashboard' }, dash),
       h('td', { class: 'actions' }, buttons));
   }
 

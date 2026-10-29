@@ -594,3 +594,21 @@ details.rowmenu[open] > summary { background: var(--surface-2); }
   .guide-steps li { grid-template-columns: 26px minmax(0, 1fr); }
   .guide-steps li > .btn { grid-column: 2; justify-self: start; }
 }
+
+/* 5.6 UI audit: phones get one scrollable row of dashboard tabs (like Inventory), not a 3x2 grid */
+@media (max-width: 640px) {
+  .dash-switch { display: flex; overflow-x: auto; scrollbar-width: none; scroll-snap-type: x proximity; }
+  .dash-switch::-webkit-scrollbar { display: none; }
+  .dash-switch button { flex: none; white-space: nowrap; min-height: 44px; padding: 0 14px; scroll-snap-align: start; }
+}
+/* A soft fade on the right edge says "there are more tabs" */
+.inv-tabs, .dash-switch { mask-image: linear-gradient(to right, #000 calc(100% - 24px), transparent); }
+@media (min-width: 761px) { .inv-tabs, .dash-switch { mask-image: none; } }
+/* Touch: steppers and small inputs get full 44px targets; inputs at 16px so phones do not zoom in */
+@media (pointer: coarse) {
+  .cart-line .btn, .cl-row .stepper .btn, .stepper .btn { min-height: 44px; min-width: 44px; }
+  .cl-row .stepper .input, .price-wrap .input, .brand-row .input { min-height: 44px; }
+}
+@media (max-width: 760px) {
+  .input, .empty-row select, .remark-row .input, .brand-row .input, .discount-row .input { font-size: 16px; }
+}
